@@ -1,0 +1,6 @@
+{
+  "claim_extraction_mode": "codex",
+  "input_text": "OpenAI released GPT-4o in 2024, and GPT-4o supports text, audio, and image inputs.",
+  "max_upstream_depth": 2,
+  "enable_url_fetch": true
+}

@@ -1,0 +1,199 @@
+{
+  "analysis_id": "b5db01cd-8bb3-47bd-9bc1-37f693d10d7e",
+  "summary": {
+    "total_claims": 3,
+    "auditable_claims": 3,
+    "non_claim_items": 0,
+    "content_mix": {
+      "factual": 0.3333,
+      "attribution": 0.0,
+      "judgment": 0.6667,
+      "has_quantitative_data": 0.3333
+    },
+    "grounding_mix": {
+      "hard_fact_grounding": 0.3333,
+      "weak_fact_grounding": 0.0,
+      "attribution_or_opinion_grounding": 0.3333,
+      "unverifiable_or_mismatch": 0.3333
+    },
+    "support_relation_mix": {
+      "directly_supports": 0.3333,
+      "partially_supports": 0.0,
+      "supports_weaker_claim": 0.0,
+      "attribution_only": 0.0,
+      "opinion_only": 0.3333,
+      "background_only": 0.0,
+      "no_support": 0.0,
+      "contradicts": 0.0,
+      "inaccessible": 0.3333
+    },
+    "key_rates": {
+      "public_fact_support_rate": 0.3333,
+      "loose_fact_support_rate": 0.3333,
+      "opinion_packaging_rate": 0.3333,
+      "source_opacity_rate": 0.3333,
+      "citation_mismatch_rate": 0.3333
+    }
+  },
+  "claims": [
+    {
+      "claim_id": "c001",
+      "original_text_span": "Experts say this policy will damage the middle class.",
+      "normalized_claim": "Experts say this policy will damage the middle class",
+      "claim_type": "judgment",
+      "has_quantitative_data": false,
+      "source_mentions": [
+        "Experts"
+      ],
+      "importance_label": "core",
+      "linked_source_ids": [
+        "s001"
+      ],
+      "final_bucket": "unverifiable_or_mismatch",
+      "support_relation": "inaccessible",
+      "risk_flags": [
+        "vague_source"
+      ],
+      "evidence_chain": [
+        {
+          "claim_id": "c001",
+          "source_id": "s001",
+          "edge_type": "author_cited",
+          "basis": "source_statement",
+          "support_relation": "inaccessible",
+          "evidence_span": "Experts",
+          "reasoning_summary": "The claim relies on an unnamed, vague, or opaque source mention, so it is not publicly auditable.",
+          "final_bucket": "unverifiable_or_mismatch",
+          "upstream_source_ids": []
+        }
+      ]
+    },
+    {
+      "claim_id": "c002",
+      "original_text_span": "A market commentary article shows that the company is guaranteed to dominate AI infrastructure [commentary](https://example.com/commentary).",
+      "normalized_claim": "A market commentary article shows that the company is guaranteed to dominate AI infrastructure",
+      "claim_type": "judgment",
+      "has_quantitative_data": false,
+      "source_mentions": [
+        "market commentary"
+      ],
+      "importance_label": "core",
+      "linked_source_ids": [
+        "s002"
+      ],
+      "final_bucket": "attribution_or_opinion_grounding",
+      "support_relation": "opinion_only",
+      "risk_flags": [
+        "opinion_used_as_fact",
+        "source_only_supports_weaker_claim"
+      ],
+      "evidence_chain": [
+        {
+          "claim_id": "c002",
+          "source_id": "s002",
+          "edge_type": "author_cited",
+          "basis": "markdown_citation",
+          "support_relation": "opinion_only",
+          "evidence_span": "This market commentary argues that the company may become a major AI infrastructure provider, but it does not guarantee dominance.",
+          "reasoning_summary": "The source is classified as opinion or analysis rather than direct factual evidence.",
+          "final_bucket": "attribution_or_opinion_grounding",
+          "upstream_source_ids": []
+        }
+      ]
+    },
+    {
+      "claim_id": "c003",
+      "original_text_span": "The company reported revenue of $10 billion in its 2024 annual report [annual report](https://example.com/annual-report).",
+      "normalized_claim": "The company reported revenue of $10 billion in its 2024 annual report",
+      "claim_type": "factual",
+      "has_quantitative_data": true,
+      "source_mentions": [],
+      "importance_label": "supporting",
+      "linked_source_ids": [
+        "s003"
+      ],
+      "final_bucket": "hard_fact_grounding",
+      "support_relation": "directly_supports",
+      "risk_flags": [],
+      "evidence_chain": [
+        {
+          "claim_id": "c003",
+          "source_id": "s003",
+          "edge_type": "author_cited",
+          "basis": "markdown_citation",
+          "support_relation": "directly_supports",
+          "evidence_span": "The company reported revenue of $10 billion in its 2024 annual report.",
+          "reasoning_summary": "The source text contains the core terms or numbers needed to support the claim.",
+          "final_bucket": "hard_fact_grounding",
+          "upstream_source_ids": []
+        }
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "source_id": "s001",
+      "url": null,
+      "title": "Experts",
+      "publisher_or_author": "",
+      "publication_date": null,
+      "access_status": "unavailable",
+      "source_type": "anonymous_or_opaque",
+      "extracted_text_preview": "Experts",
+      "upstream_source_ids": []
+    },
+    {
+      "source_id": "s002",
+      "url": "https://example.com/commentary",
+      "title": "Market commentary on AI infrastructure",
+      "publisher_or_author": "",
+      "publication_date": null,
+      "access_status": "accessible",
+      "source_type": "opinion_analysis",
+      "extracted_text_preview": "This market commentary argues that the company may become a major AI infrastructure provider, but it does not guarantee dominance.",
+      "upstream_source_ids": []
+    },
+    {
+      "source_id": "s003",
+      "url": "https://example.com/annual-report",
+      "title": "2024 annual report",
+      "publisher_or_author": "",
+      "publication_date": null,
+      "access_status": "accessible",
+      "source_type": "primary_fact_source",
+      "extracted_text_preview": "The company reported revenue of $10 billion in its 2024 annual report.",
+      "upstream_source_ids": []
+    }
+  ],
+  "high_risk_claims": [
+    {
+      "claim_id": "c001",
+      "normalized_claim": "Experts say this policy will damage the middle class",
+      "risk_flags": [
+        "vague_source"
+      ],
+      "final_bucket": "unverifiable_or_mismatch",
+      "support_relation": "inaccessible",
+      "explanation": "The claim relies on an unnamed, vague, or opaque source mention."
+    },
+    {
+      "claim_id": "c002",
+      "normalized_claim": "A market commentary article shows that the company is guaranteed to dominate AI infrastructure",
+      "risk_flags": [
+        "opinion_used_as_fact",
+        "source_only_supports_weaker_claim"
+      ],
+      "final_bucket": "attribution_or_opinion_grounding",
+      "support_relation": "opinion_only",
+      "explanation": "The cited material appears to be opinion or analysis rather than direct factual evidence."
+    }
+  ],
+  "metadata": {
+    "mode": "ai_answer_or_article",
+    "max_upstream_depth": 2,
+    "enable_url_fetch": true,
+    "enable_web_search": true,
+    "citation_count": 2,
+    "note": "MVP mode: no truth verdict or single credibility score is produced."
+  }
+}

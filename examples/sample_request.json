@@ -1,0 +1,22 @@
+{
+  "input_text": "Experts say this policy will damage the middle class.\n\nA market commentary article shows that the company is guaranteed to dominate AI infrastructure [commentary](https://example.com/commentary).\n\nThe company reported revenue of $10 billion in its 2024 annual report [annual report](https://example.com/annual-report).",
+  "claim_extraction_mode": "codex",
+  "max_upstream_depth": 2,
+  "enable_url_fetch": true,
+  "provided_sources": [
+    {
+      "url": "https://example.com/commentary",
+      "title": "Market commentary on AI infrastructure",
+      "source_type": "opinion_analysis",
+      "access_status": "accessible",
+      "extracted_text": "This market commentary argues that the company may become a major AI infrastructure provider, but it does not guarantee dominance."
+    },
+    {
+      "url": "https://example.com/annual-report",
+      "title": "2024 annual report",
+      "source_type": "primary_fact_source",
+      "access_status": "accessible",
+      "extracted_text": "The company reported revenue of $10 billion in its 2024 annual report."
+    }
+  ]
+}

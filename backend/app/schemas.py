@@ -1,0 +1,232 @@
+from __future__ import annotations
+
+from enum import Enum
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, Field, HttpUrl
+
+
+class ClaimType(str, Enum):
+    FACTUAL = "factual"
+    ATTRIBUTION = "attribution"
+    JUDGMENT = "judgment"
+    NON_CLAIM = "non_claim"
+
+
+class ImportanceLabel(str, Enum):
+    CORE = "core"
+    SUPPORTING = "supporting"
+    BACKGROUND = "background"
+
+
+class ClaimExtractionMode(str, Enum):
+    OPENAI = "openai"
+    CODEX = "codex"
+    CODEX_CLI = "codex_cli"
+    AUTO = "auto"
+
+
+class AccessStatus(str, Enum):
+    ACCESSIBLE = "accessible"
+    PAYWALLED = "paywalled"
+    FAILED = "failed"
+    UNAVAILABLE = "unavailable"
+
+
+class SourceType(str, Enum):
+    PRIMARY_FACT_SOURCE = "primary_fact_source"
+    EVIDENCE_SYNTHESIS = "evidence_synthesis"
+    SECONDARY_REPORTING = "secondary_reporting"
+    OPINION_ANALYSIS = "opinion_analysis"
+    ANONYMOUS_OR_OPAQUE = "anonymous_or_opaque"
+    UNKNOWN = "unknown"
+
+
+class SupportRelation(str, Enum):
+    DIRECTLY_SUPPORTS = "directly_supports"
+    PARTIALLY_SUPPORTS = "partially_supports"
+    SUPPORTS_WEAKER_CLAIM = "supports_weaker_claim"
+    ATTRIBUTION_ONLY = "attribution_only"
+    OPINION_ONLY = "opinion_only"
+    BACKGROUND_ONLY = "background_only"
+    NO_SUPPORT = "no_support"
+    CONTRADICTS = "contradicts"
+    INACCESSIBLE = "inaccessible"
+
+
+class GroundingBucket(str, Enum):
+    HARD_FACT_GROUNDING = "hard_fact_grounding"
+    WEAK_FACT_GROUNDING = "weak_fact_grounding"
+    ATTRIBUTION_OR_OPINION_GROUNDING = "attribution_or_opinion_grounding"
+    UNVERIFIABLE_OR_MISMATCH = "unverifiable_or_mismatch"
+
+
+class EdgeType(str, Enum):
+    AUTHOR_CITED = "author_cited"
+    DISCOVERED_SOURCE = "discovered_source"
+    UPSTREAM_SOURCE = "upstream_source"
+
+
+class EdgeBasis(str, Enum):
+    EXPLICIT_LINK = "explicit_link"
+    MARKDOWN_CITATION = "markdown_citation"
+    FOOTNOTE = "footnote"
+    REFERENCE_LIST = "reference_list"
+    SOURCE_STATEMENT = "source_statement"
+    DISCOVERED_SOURCE = "discovered_source"
+    NONE = "none"
+
+
+class RiskFlag(str, Enum):
+    SOURCE_CLAIM_MISMATCH = "source_claim_mismatch"
+    CAUSAL_OVERCLAIM = "causal_overclaim"
+    CORRELATION_PRESENTED_AS_CAUSATION = "correlation_presented_as_causation"
+    OUTDATED_SOURCE = "outdated_source"
+    ANONYMOUS_SOURCE = "anonymous_source"
+    VAGUE_SOURCE = "vague_source"
+    INACCESSIBLE_SOURCE = "inaccessible_source"
+    OPINION_USED_AS_FACT = "opinion_used_as_fact"
+    SECONDARY_SOURCE_ONLY = "secondary_source_only"
+    QUANTITATIVE_CLAIM_WITHOUT_PRIMARY_DATA = "quantitative_claim_without_primary_data"
+    OVERGENERALIZATION = "overgeneralization"
+    SOURCE_ONLY_SUPPORTS_WEAKER_CLAIM = "source_only_supports_weaker_claim"
+
+
+class ParsedCitation(BaseModel):
+    citation_id: str
+    raw_text: str
+    url: Optional[str] = None
+    label: Optional[str] = None
+    kind: EdgeBasis = EdgeBasis.EXPLICIT_LINK
+    span_start: int = 0
+    span_end: int = 0
+
+
+class ProvidedSource(BaseModel):
+    """Optional source body supplied by the caller.
+
+    Useful for tests, demos, and private documents where the backend should not fetch a URL.
+    If `url` matches a parsed citation URL, this content is used as the source body.
+    """
+
+    url: Optional[str] = None
+    title: Optional[str] = None
+    publisher_or_author: Optional[str] = None
+    publication_date: Optional[str] = None
+    source_type: SourceType = SourceType.UNKNOWN
+    extracted_text: str = ""
+    access_status: AccessStatus = AccessStatus.ACCESSIBLE
+
+
+class Source(BaseModel):
+    source_id: str
+    url: Optional[str] = None
+    title: str = ""
+    publisher_or_author: str = ""
+    publication_date: Optional[str] = None
+    access_status: AccessStatus = AccessStatus.UNAVAILABLE
+    source_type: SourceType = SourceType.UNKNOWN
+    extracted_text_preview: str = ""
+    extracted_text: str = Field(default="", exclude=True)
+    upstream_source_ids: List[str] = Field(default_factory=list)
+
+
+class EvidenceEdge(BaseModel):
+    claim_id: str
+    source_id: Optional[str] = None
+    edge_type: EdgeType = EdgeType.AUTHOR_CITED
+    basis: EdgeBasis = EdgeBasis.NONE
+    support_relation: SupportRelation = SupportRelation.INACCESSIBLE
+    evidence_span: str = ""
+    reasoning_summary: str = ""
+    final_bucket: GroundingBucket = GroundingBucket.UNVERIFIABLE_OR_MISMATCH
+    upstream_source_ids: List[str] = Field(default_factory=list)
+
+
+class Claim(BaseModel):
+    claim_id: str
+    original_text_span: str
+    normalized_claim: str
+    claim_type: ClaimType
+    has_quantitative_data: bool = False
+    source_mentions: List[str] = Field(default_factory=list)
+    importance_label: ImportanceLabel = ImportanceLabel.SUPPORTING
+    linked_source_ids: List[str] = Field(default_factory=list)
+    final_bucket: Optional[GroundingBucket] = None
+    support_relation: Optional[SupportRelation] = None
+    risk_flags: List[RiskFlag] = Field(default_factory=list)
+    evidence_chain: List[EvidenceEdge] = Field(default_factory=list)
+
+
+class ContentMix(BaseModel):
+    factual: float = 0.0
+    attribution: float = 0.0
+    judgment: float = 0.0
+    has_quantitative_data: float = 0.0
+
+
+class GroundingMix(BaseModel):
+    hard_fact_grounding: float = 0.0
+    weak_fact_grounding: float = 0.0
+    attribution_or_opinion_grounding: float = 0.0
+    unverifiable_or_mismatch: float = 0.0
+
+
+class SupportRelationMix(BaseModel):
+    directly_supports: float = 0.0
+    partially_supports: float = 0.0
+    supports_weaker_claim: float = 0.0
+    attribution_only: float = 0.0
+    opinion_only: float = 0.0
+    background_only: float = 0.0
+    no_support: float = 0.0
+    contradicts: float = 0.0
+    inaccessible: float = 0.0
+
+
+class KeyRates(BaseModel):
+    public_fact_support_rate: float = 0.0
+    loose_fact_support_rate: float = 0.0
+    opinion_packaging_rate: float = 0.0
+    source_opacity_rate: float = 0.0
+    citation_mismatch_rate: float = 0.0
+
+
+class AnalysisSummary(BaseModel):
+    total_claims: int = 0
+    auditable_claims: int = 0
+    non_claim_items: int = 0
+    content_mix: ContentMix = Field(default_factory=ContentMix)
+    grounding_mix: GroundingMix = Field(default_factory=GroundingMix)
+    support_relation_mix: SupportRelationMix = Field(default_factory=SupportRelationMix)
+    key_rates: KeyRates = Field(default_factory=KeyRates)
+
+
+class AnalysisRequest(BaseModel):
+    input_text: str = Field(..., min_length=1)
+    original_question: Optional[str] = None
+    mode: str = "ai_answer_or_article"
+    claim_extraction_mode: Optional[ClaimExtractionMode] = None
+    max_upstream_depth: int = Field(default=2, ge=0, le=3)
+    enable_url_fetch: bool = True
+    enable_web_search: bool = True
+    max_search_results: int = Field(default=2, ge=1, le=5)
+    provided_sources: List[ProvidedSource] = Field(default_factory=list)
+
+
+class HighRiskClaim(BaseModel):
+    claim_id: str
+    normalized_claim: str
+    risk_flags: List[RiskFlag]
+    final_bucket: Optional[GroundingBucket]
+    support_relation: Optional[SupportRelation]
+    explanation: str = ""
+
+
+class AnalysisResult(BaseModel):
+    analysis_id: str
+    summary: AnalysisSummary
+    claims: List[Claim]
+    sources: List[Source] = Field(default_factory=list)
+    high_risk_claims: List[HighRiskClaim] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)

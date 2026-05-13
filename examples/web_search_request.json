@@ -1,0 +1,6 @@
+{
+  "input_text": "The company reported revenue of $10 billion in its 2024 annual report [1].\n\n[1] 2024 annual report revenue $10 billion",
+  "enable_web_search": true,
+  "max_search_results": 2,
+  "enable_url_fetch": true
+}

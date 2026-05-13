@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Source Grounding Auditor</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #1f2937; background: #f8fafc; }
+    body { margin: 0; }
+    main { max-width: 1160px; margin: 0 auto; padding: 32px 20px 64px; }
+    h1 { font-size: 30px; margin: 0 0 8px; }
+    h2 { margin-top: 28px; }
+    textarea, input, select { width: 100%; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 12px; padding: 12px; font: inherit; background: white; }
+    textarea { min-height: 220px; resize: vertical; }
+    button { border: 0; border-radius: 999px; padding: 12px 18px; font-weight: 700; cursor: pointer; background: #111827; color: white; }
+    button.secondary { background: #e2e8f0; color: #111827; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+    .checkline { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
+    .checkline input { width: auto; }
+    .muted { color: #64748b; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+    .card { background: white; border: 1px solid #e2e8f0; border-radius: 16px; padding: 16px; box-shadow: 0 1px 2px rgba(15,23,42,0.04); }
+    .metric { display: flex; justify-content: space-between; margin: 9px 0; gap: 12px; }
+    .bar { height: 8px; background: #e2e8f0; border-radius: 99px; overflow: hidden; margin-top: 4px; }
+    .bar > span { display: block; height: 100%; background: #111827; }
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 16px; overflow: hidden; }
+    th, td { padding: 10px; border-bottom: 1px solid #e2e8f0; text-align: left; vertical-align: top; }
+    th { background: #f1f5f9; font-size: 13px; }
+    code, .pill { background: #f1f5f9; border-radius: 999px; padding: 3px 8px; display: inline-block; margin: 2px; font-size: 12px; }
+    details { margin-top: 6px; }
+    .error { color: #b91c1c; font-weight: 700; }
+    .small { font-size: 13px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Source Grounding Auditor</h1>
+    <p class="muted">分析带来源内容的事实支撑结构。这个 MVP 不输出可信度总分，也不判断观点对错，只展示可追溯事实支撑比例、观点包装、来源不透明和引用错配。</p>
+
+    <section class="card">
+      <label for="question"><strong>原始问题，可选</strong></label>
+      <input id="question" placeholder="例如：这段 AI 回答是否有可靠事实支撑？" />
+      <div style="height:12px"></div>
+      <label for="extractor"><strong>Claim extractor</strong></label>
+      <select id="extractor">
+        <option value="codex" selected>Codex 订阅 / GPT-5.5</option>
+        <option value="openai">OpenAI API 抽取</option>
+        <option value="auto">Auto：OpenAI API 或 Codex</option>
+      </select>
+      <label class="checkline">
+        <input type="checkbox" id="webSearch" checked />
+        <span>自动搜索缺失 URL 的来源说明</span>
+      </label>
+      <div style="height:12px"></div>
+      <label for="text"><strong>输入文本</strong></label>
+      <textarea id="text" placeholder="粘贴 AI 回答、网络文章正文或带 citation 的文本"></textarea>
+      <div class="row">
+        <button id="analyzeBtn">Analyze</button>
+        <button class="secondary" id="sampleBtn">加载示例</button>
+        <span class="muted small">默认抓取显式 URL，并会搜索缺失 URL 的来源说明。仍可在 API 请求里传 provided_sources 做精确测试。</span>
+      </div>
+      <p id="status" class="muted"></p>
+    </section>
+
+    <section id="results" style="display:none">
+      <h2>比例摘要</h2>
+      <div class="grid" id="summaryCards"></div>
+
+      <h2>高风险 claim</h2>
+      <div id="risks" class="card"></div>
+
+      <h2>Claim 明细</h2>
+      <div style="overflow:auto">
+        <table>
+          <thead>
+            <tr>
+              <th>Claim</th><th>类型</th><th>数据</th><th>最终桶</th><th>支撑关系</th><th>风险标签</th><th>证据链</th>
+            </tr>
+          </thead>
+          <tbody id="claimsBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+<script>
+const pct = (v) => `${Math.round((v || 0) * 100)}%`;
+const escapeHtml = (s) => (s || '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+function metric(label, value) {
+  return `<div class="metric"><span>${label}</span><strong>${pct(value)}</strong></div><div class="bar"><span style="width:${pct(value)}"></span></div>`;
+}
+function card(title, items) {
+  return `<div class="card"><strong>${title}</strong>${items.map(([k,v]) => metric(k,v)).join('')}</div>`;
+}
+function render(result) {
+  document.getElementById('results').style.display = 'block';
+  const s = result.summary;
+  document.getElementById('summaryCards').innerHTML = [
+    card('内容构成', [
+      ['事实陈述', s.content_mix.factual], ['归属陈述', s.content_mix.attribution], ['判断陈述', s.content_mix.judgment], ['含数据 claim', s.content_mix.has_quantitative_data]
+    ]),
+    card('来源链终点', [
+      ['硬事实支撑', s.grounding_mix.hard_fact_grounding], ['弱事实支撑', s.grounding_mix.weak_fact_grounding], ['归属或观点支撑', s.grounding_mix.attribution_or_opinion_grounding], ['不可验证或错配', s.grounding_mix.unverifiable_or_mismatch]
+    ]),
+    card('核心指标', [
+      ['公开事实支撑率', s.key_rates.public_fact_support_rate], ['宽松事实支撑率', s.key_rates.loose_fact_support_rate], ['观点包装率', s.key_rates.opinion_packaging_rate], ['来源不透明率', s.key_rates.source_opacity_rate], ['引用错配率', s.key_rates.citation_mismatch_rate]
+    ])
+  ].join('');
+  const risks = result.high_risk_claims || [];
+  document.getElementById('risks').innerHTML = risks.length ? risks.map(r => `
+    <p><strong>${escapeHtml(r.normalized_claim)}</strong><br><span class="muted">${escapeHtml(r.explanation)}</span><br>${(r.risk_flags || []).map(f => `<span class="pill">${f}</span>`).join('')}</p>
+  `).join('') : '<p class="muted">没有高风险 claim。</p>';
+
+  document.getElementById('claimsBody').innerHTML = (result.claims || []).map(c => {
+    const chain = (c.evidence_chain || []).map(e => `<details><summary>${escapeHtml(e.support_relation)} via ${escapeHtml(e.basis)}</summary><p>${escapeHtml(e.reasoning_summary)}</p><p class="muted">${escapeHtml(e.evidence_span)}</p></details>`).join('');
+    return `<tr><td>${escapeHtml(c.normalized_claim)}</td><td>${c.claim_type}</td><td>${c.has_quantitative_data ? 'yes' : 'no'}</td><td>${escapeHtml(c.final_bucket || '')}</td><td>${escapeHtml(c.support_relation || '')}</td><td>${(c.risk_flags || []).map(f => `<span class="pill">${f}</span>`).join('')}</td><td>${chain}</td></tr>`;
+  }).join('');
+}
+async function analyze() {
+  const status = document.getElementById('status');
+  status.textContent = 'Analyzing...';
+  status.className = 'muted';
+  try {
+    const res = await fetch('/analyze', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        input_text: document.getElementById('text').value,
+        original_question: document.getElementById('question').value || null,
+        claim_extraction_mode: document.getElementById('extractor').value,
+        enable_url_fetch: true,
+        enable_web_search: document.getElementById('webSearch').checked,
+        max_upstream_depth: 2
+      })
+    });
+    if (!res.ok) {
+      let message = await res.text();
+      try {
+        const errorData = JSON.parse(message);
+        message = errorData.detail || message;
+      } catch (_) {}
+      throw new Error(message);
+    }
+    const data = await res.json();
+    status.textContent = `Done. Claims: ${data.summary.total_claims}, auditable: ${data.summary.auditable_claims}.`;
+    render(data);
+  } catch (err) {
+    status.textContent = String(err);
+    status.className = 'error';
+  }
+}
+document.getElementById('analyzeBtn').addEventListener('click', analyze);
+document.getElementById('sampleBtn').addEventListener('click', () => {
+  document.getElementById('text').value = `Experts say this policy will damage the middle class.\n\nA market commentary article shows that the company is guaranteed to dominate AI infrastructure.\n\nThe company reported revenue of $10 billion in its 2024 annual report.`;
+});
+</script>
+</body>
+</html>

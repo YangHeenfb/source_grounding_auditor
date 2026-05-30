@@ -12,9 +12,11 @@ from .schemas import (
     GroundingMix,
     KeyRates,
     RiskFlag,
+    SourceRoleForClaim,
     SourceOpacity,
     SupportRelation,
     SupportRelationMix,
+    SupportScope,
 )
 
 
@@ -76,22 +78,47 @@ class RatioReporter:
             for c in auditable
             if c.source_opacity in opaque_source_labels or any(flag in opacity_flags for flag in c.risk_flags)
         )
-        mismatch_flags = {
-            RiskFlag.SOURCE_CLAIM_MISMATCH,
-            RiskFlag.SOURCE_ONLY_SUPPORTS_WEAKER_CLAIM,
-            RiskFlag.CORRELATION_PRESENTED_AS_CAUSATION,
-            RiskFlag.QUANTITATIVE_CLAIM_WITHOUT_PRIMARY_DATA,
-        }
         mismatch_relations = {
             SupportRelation.NO_SUPPORT,
             SupportRelation.CONTRADICTS,
-            SupportRelation.BACKGROUND_ONLY,
-            SupportRelation.SUPPORTS_WEAKER_CLAIM,
         }
         citation_mismatch = sum(
             1
             for c in auditable
-            if any(flag in mismatch_flags for flag in c.risk_flags) or (c.support_relation in mismatch_relations)
+            if RiskFlag.SOURCE_CLAIM_MISMATCH in c.risk_flags or (c.support_relation in mismatch_relations)
+        )
+        premise_support_for_analysis = sum(
+            1
+            for c in auditable
+            if c.support_scope == SupportScope.PREMISE_SUPPORT_FOR_ANALYSIS
+            or any(edge.support_scope == SupportScope.PREMISE_SUPPORT_FOR_ANALYSIS for edge in c.evidence_chain)
+        )
+        official_fact_scopes = {
+            SupportScope.OWN_INSTITUTIONAL_FACT,
+            SupportScope.OWN_PRODUCT_OR_PROGRAM_FACT,
+            SupportScope.OWN_REPORTED_DATA,
+            SupportScope.OFFICIAL_ANNOUNCEMENT,
+        }
+        official_source_roles = {
+            SourceRoleForClaim.OFFICIAL_INSTITUTION_SOURCE,
+            SourceRoleForClaim.OFFICIAL_COMPANY_SOURCE,
+            SourceRoleForClaim.REGULATORY_OR_FILING_SOURCE,
+            SourceRoleForClaim.SCHOLARLY_PRIMARY_SOURCE,
+            SourceRoleForClaim.EVIDENCE_SYNTHESIS_SOURCE,
+        }
+        official_fact_support = sum(
+            1
+            for c in auditable
+            if (
+                c.support_scope in official_fact_scopes
+                and c.source_role_for_claim in official_source_roles
+                and c.support_relation
+                in {
+                    SupportRelation.DIRECTLY_SUPPORTS,
+                    SupportRelation.PARTIALLY_SUPPORTS,
+                    SupportRelation.SUPPORTS_WEAKER_CLAIM,
+                }
+            )
         )
 
         key_rates = KeyRates(
@@ -100,6 +127,8 @@ class RatioReporter:
             opinion_packaging_rate=_ratio(opinion_packaging, denom),
             source_opacity_rate=_ratio(source_opacity, denom),
             citation_mismatch_rate=_ratio(citation_mismatch, denom),
+            premise_support_for_analysis_rate=_ratio(premise_support_for_analysis, denom),
+            official_fact_support_rate=_ratio(official_fact_support, denom),
         )
 
         return AnalysisSummary(

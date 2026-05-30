@@ -20,6 +20,12 @@ SYNTHESIS_TERMS = ["systematic review", "meta-analysis", "guideline", "evidence 
 
 
 def classify_source_type(url: str | None = None, title: str = "", text: str = "") -> SourceType:
+    """Fast-path/fallback coarse source type classification.
+
+    This function is not the officialness authority. Claim-relative source roles
+    are assigned by ClaimAwareSourceRoleClassifier after source entity resolution.
+    """
+
     haystack = " ".join([url or "", title or "", text[:4000] or ""]).lower()
     domain = urlparse(url).netloc.lower() if url else ""
 

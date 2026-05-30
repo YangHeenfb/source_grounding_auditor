@@ -13,6 +13,8 @@ from .citation_parser import (
     reference_descriptions_near_text_span,
 )
 from .citation_parser import FOOTNOTE_REF_RE
+from .claim_aware_source_role_classifier import classify_claim_source_role
+from .official_domain_verifier import OfficialDomainVerificationResult
 from .providers.llm_provider import (
     CancellationToken,
     CodexCLILLMProvider,
@@ -43,6 +45,7 @@ from .schemas import (
     SourceOpacity,
     SupportRelation,
 )
+from .source_entity_resolver import SourceEntityResolution
 from .source_fetcher import SourceFetcher
 from .support_checker import SupportChecker, SupportCheckInput
 from .upstream_tracer import UpstreamTracer
@@ -274,6 +277,7 @@ class SourceGroundingAnalyzer:
         for support_input, (edge, flags) in zip(support_inputs, support_results):
             if support_input.source is not None:
                 edge.upstream_source_ids = support_input.source.upstream_source_ids
+                _apply_claim_aware_source_role(support_input.claim, support_input.source, edge)
             support_results_by_claim.setdefault(support_input.claim.claim_id, []).append((edge, flags))
 
         for claim in claims:
@@ -290,6 +294,10 @@ class SourceGroundingAnalyzer:
             claim.reasoning_summary = best_edge.reasoning_summary or claim.reasoning_summary
             claim.evidence_quote = best_edge.evidence_quote or best_edge.evidence_span
             claim.source_role = best_edge.source_role
+            claim.source_role_for_claim = best_edge.source_role_for_claim
+            claim.source_to_claim_relation = best_edge.source_to_claim_relation
+            claim.support_scope = best_edge.support_scope
+            claim.source_role_basis = best_edge.source_role_basis
             claim.risk_flags = list(dict.fromkeys(claim.risk_flags + all_flags))
 
         _emit_progress(
@@ -462,6 +470,44 @@ def _apply_audit_limited_override(claim: Claim) -> None:
         and claim.support_relation.value == "inaccessible"
     ):
         claim.review_category = ClaimReviewCategory.AUDIT_LIMITED
+
+
+def _apply_claim_aware_source_role(claim: Claim, source: Source, edge: Any) -> None:
+    resolution = SourceEntityResolution(
+        source_entity=source.source_entity,
+        registrable_domain=source.registrable_domain,
+        publisher_name=source.publisher_name,
+        organization_type=source.organization_type,
+        entity_aliases=source.entity_aliases,
+        metadata_basis=source.metadata_basis,
+    )
+    officialness = OfficialDomainVerificationResult(
+        officialness_status=source.officialness_status,
+        basis=source.officialness_basis,
+    )
+    result = classify_claim_source_role(
+        claim=claim,
+        source=source,
+        source_entity_resolution=resolution,
+        officialness_result=officialness,
+        support_relation=edge.support_relation,
+    )
+    edge.source_role_for_claim = result.source_role_for_claim
+    edge.source_to_claim_relation = result.source_to_claim_relation
+    edge.support_scope = result.support_scope
+    edge.source_role_basis = result.basis
+    if (
+        result.support_scope.value == "premise_support_for_analysis"
+        and claim.claim_type == ClaimType.JUDGMENT
+        and edge.support_relation == SupportRelation.DIRECTLY_SUPPORTS
+    ):
+        edge.support_relation = SupportRelation.PARTIALLY_SUPPORTS
+        if edge.final_bucket == FinalGroundingBucket.HARD_FACT_GROUNDING:
+            edge.final_bucket = FinalGroundingBucket.WEAK_FACT_GROUNDING
+        edge.reasoning_summary = (
+            f"{edge.reasoning_summary} Claim-aware source role: official source provides premises "
+            "for analysis/judgment, not direct fact support."
+        ).strip()
 
 
 def _apply_timeout_review_fallback(claim: Claim, exc: LLMProviderTimeoutError) -> None:
@@ -649,6 +695,8 @@ def _analysis_text_for_request(
         paragraph = paragraph.strip()
         if not paragraph:
             continue
+        if _is_source_registry_paragraph(paragraph):
+            continue
         has_explicit_citation = any(
             start <= citation.span_start < end
             for citation in citations
@@ -662,6 +710,21 @@ def _analysis_text_for_request(
                 seen.add(normalized)
                 chunks.append(paragraph)
     return "\n\n".join(chunks), len(chunks)
+
+
+def _is_source_registry_paragraph(paragraph: str) -> bool:
+    lines = [line.strip() for line in paragraph.splitlines() if line.strip()]
+    if not lines:
+        return False
+    heading_terms = {"sources", "references", "source pointer", "来源", "来源指针", "参考资料", "资料来源"}
+    content_lines = [line for line in lines if line.strip(" ：:").lower() not in heading_terms]
+    if not content_lines:
+        return True
+    reference_like = 0
+    for line in content_lines:
+        if re.match(r"^(?:\[\d+\]|\d+\.|-)\s+", line) or re.match(r"^\[?\^?\d+\]?\s*[:.]\s+", line):
+            reference_like += 1
+    return bool(reference_like and reference_like == len(content_lines))
 
 
 def _paragraph_spans(text: str) -> list[tuple[int, int, str]]:

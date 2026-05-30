@@ -9,7 +9,9 @@ import httpx
 
 from .providers.search_provider import SearchResult
 from .schemas import AccessStatus, ProvidedSource, Source, SourceType
+from .official_domain_verifier import verify_official_domain
 from .source_classifier import classify_source_type
+from .source_entity_resolver import extract_html_metadata, resolve_source_entity
 
 TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 SCRIPT_STYLE_RE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
@@ -43,29 +45,63 @@ class SourceFetcher:
         source_type = provided.source_type
         if source_type == SourceType.UNKNOWN:
             source_type = classify_source_type(provided.url, title, provided.extracted_text)
-        return Source(
-            source_id=source_id,
-            url=provided.url,
-            title=title,
-            publisher_or_author=provided.publisher_or_author or "",
-            publication_date=provided.publication_date,
-            access_status=provided.access_status,
-            source_type=source_type,
-            extracted_text=provided.extracted_text,
-            extracted_text_preview=preview(provided.extracted_text),
+        return self._enrich_source(
+            Source(
+                source_id=source_id,
+                url=provided.url,
+                title=title,
+                publisher_or_author=provided.publisher_or_author or "",
+                publication_date=provided.publication_date,
+                access_status=provided.access_status,
+                source_type=source_type,
+                extracted_text=provided.extracted_text,
+                extracted_text_preview=preview(provided.extracted_text),
+            ),
+            html_metadata={},
+            provided_source_type=provided.source_type,
         )
+
+    def _enrich_source(
+        self,
+        source: Source,
+        *,
+        html_metadata: dict | None = None,
+        provided_source_type: SourceType | None = None,
+    ) -> Source:
+        resolution = resolve_source_entity(
+            url=source.url,
+            title=source.title,
+            html_metadata=html_metadata or {},
+            source_text=source.extracted_text or source.extracted_text_preview,
+            publisher_or_author=source.publisher_or_author,
+        )
+        verification = verify_official_domain(
+            resolution,
+            metadata={"provided_source_type": provided_source_type.value if provided_source_type else None},
+        )
+        source.source_entity = resolution.source_entity
+        source.registrable_domain = resolution.registrable_domain
+        source.publisher_name = resolution.publisher_name
+        source.organization_type = resolution.organization_type
+        source.entity_aliases = resolution.entity_aliases
+        source.metadata_basis = resolution.metadata_basis
+        source.officialness_status = verification.officialness_status
+        source.officialness_basis = verification.basis
+        return source
 
     def make_opaque_source(self, source_id: str, mention: str) -> Source:
         text = mention or "Opaque or unnamed source mention"
-        return Source(
-            source_id=source_id,
-            url=None,
-            title=text,
-            publisher_or_author="",
-            access_status=AccessStatus.UNAVAILABLE,
-            source_type=SourceType.ANONYMOUS_OR_OPAQUE,
-            extracted_text=text,
-            extracted_text_preview=text,
+        return self._enrich_source(
+            Source(
+                source_id=source_id,
+                url=None,
+                title=text,
+                publisher_or_author="",
+                access_status=AccessStatus.UNAVAILABLE,
+                source_type=SourceType.ANONYMOUS_OR_OPAQUE,
+                extracted_text=text,
+                extracted_text_preview=text,
+            )
         )
 
     def source_from_search_result(self, result: SearchResult, source_id: str) -> Source:
@@ -78,14 +114,16 @@ class SourceFetcher:
 
         extracted = " ".join(part for part in [result.title, result.snippet] if part).strip()
         source_type = classify_source_type(result.url, result.title, extracted)
-        return Source(
-            source_id=source_id,
-            url=result.url,
-            title=result.title or result.url,
-            access_status=AccessStatus.ACCESSIBLE if extracted else AccessStatus.UNAVAILABLE,
-            source_type=source_type,
-            extracted_text=extracted,
-            extracted_text_preview=preview(extracted or "Discovered by web search, but no snippet was available."),
+        return self._enrich_source(
+            Source(
+                source_id=source_id,
+                url=result.url,
+                title=result.title or result.url,
+                access_status=AccessStatus.ACCESSIBLE if extracted else AccessStatus.UNAVAILABLE,
+                source_type=source_type,
+                extracted_text=extracted,
+                extracted_text_preview=preview(extracted or "Discovered by web search, but no snippet was available."),
+            )
         )
 
     def fetch_url(self, url: str, source_id: str, provided_sources: list[ProvidedSource] | None = None) -> Source:
@@ -97,14 +135,16 @@ class SourceFetcher:
         title = urlparse(url).netloc or url
         if not self.enable_url_fetch:
             source_type = classify_source_type(url, title, "")
-            return Source(
-                source_id=source_id,
-                url=url,
-                title=title,
-                access_status=AccessStatus.UNAVAILABLE,
-                source_type=source_type,
-                extracted_text="",
-                extracted_text_preview="URL detected. Fetching is disabled for this request.",
+            return self._enrich_source(
+                Source(
+                    source_id=source_id,
+                    url=url,
+                    title=title,
+                    access_status=AccessStatus.UNAVAILABLE,
+                    source_type=source_type,
+                    extracted_text="",
+                    extracted_text_preview="URL detected. Fetching is disabled for this request.",
+                )
             )
 
         try:
@@ -118,26 +158,32 @@ class SourceFetcher:
                     status = AccessStatus.ACCESSIBLE
                 content_type = response.headers.get("content-type", "")
                 raw = response.text if "text" in content_type or "html" in content_type or not content_type else response.text
+                metadata = extract_html_metadata(raw)
                 fetched_title, text = html_to_text(raw)
                 title = fetched_title or title
                 source_type = classify_source_type(url, title, text)
-                return Source(
-                    source_id=source_id,
-                    url=url,
-                    title=title,
-                    access_status=status,
-                    source_type=source_type,
-                    extracted_text=text,
-                    extracted_text_preview=preview(text),
+                return self._enrich_source(
+                    Source(
+                        source_id=source_id,
+                        url=url,
+                        title=title,
+                        access_status=status,
+                        source_type=source_type,
+                        extracted_text=text,
+                        extracted_text_preview=preview(text),
+                    ),
+                    html_metadata=metadata,
                 )
         except Exception as exc:  # pragma: no cover - network dependent
             source_type = classify_source_type(url, title, "")
-            return Source(
-                source_id=source_id,
-                url=url,
-                title=title,
-                access_status=AccessStatus.FAILED,
-                source_type=source_type,
-                extracted_text="",
-                extracted_text_preview=f"Fetch failed: {exc}",
+            return self._enrich_source(
+                Source(
+                    source_id=source_id,
+                    url=url,
+                    title=title,
+                    access_status=AccessStatus.FAILED,
+                    source_type=source_type,
+                    extracted_text="",
+                    extracted_text_preview=f"Fetch failed: {exc}",
+                )
             )

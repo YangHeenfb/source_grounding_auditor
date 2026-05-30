@@ -146,7 +146,13 @@ function render(result) {
       ['硬事实支撑', s.grounding_mix.hard_fact_grounding], ['弱事实支撑', s.grounding_mix.weak_fact_grounding], ['归属或观点支撑', s.grounding_mix.attribution_or_opinion_grounding], ['不可验证或错配', s.grounding_mix.unverifiable_or_mismatch]
     ]),
     card('核心指标', [
-      ['公开事实支撑率', s.key_rates.public_fact_support_rate], ['宽松事实支撑率', s.key_rates.loose_fact_support_rate], ['观点包装率', s.key_rates.opinion_packaging_rate], ['来源不透明率', s.key_rates.source_opacity_rate], ['引用错配率', s.key_rates.citation_mismatch_rate]
+      ['公开事实支撑率', s.key_rates.public_fact_support_rate],
+      ['官方事实支撑率', s.key_rates.official_fact_support_rate],
+      ['分析前提支撑率', s.key_rates.premise_support_for_analysis_rate],
+      ['宽松事实支撑率', s.key_rates.loose_fact_support_rate],
+      ['观点包装率', s.key_rates.opinion_packaging_rate],
+      ['来源不透明率', s.key_rates.source_opacity_rate],
+      ['真正引用错配率', s.key_rates.citation_mismatch_rate]
     ])
   ].join('');
   renderReviewList('problematicCitations', result.problematic_citations || result.high_risk_claims || [], '没有 problematic citations。');
@@ -156,7 +162,7 @@ function render(result) {
   renderReviewList('flaggedCitations', result.flagged_citations || result.flagged_claims || [], '没有 flagged but not problematic citations。');
 
   document.getElementById('claimsBody').innerHTML = (result.claims || []).map(c => {
-    const chain = (c.evidence_chain || []).map(e => `<details><summary>${escapeHtml(e.support_relation)} via ${escapeHtml(e.basis)}</summary><p>${escapeHtml(e.reasoning_summary)}</p><p class="muted">${escapeHtml(e.evidence_span)}</p></details>`).join('');
+    const chain = (c.evidence_chain || []).map(e => `<details><summary>${escapeHtml(e.support_relation)} via ${escapeHtml(e.basis)}</summary><p>${escapeHtml(e.reasoning_summary)}</p><p><span class="pill">${escapeHtml(e.source_role_for_claim || '')}</span><span class="pill">${escapeHtml(e.support_scope || '')}</span></p><p class="muted">${escapeHtml(e.evidence_span)}</p></details>`).join('');
     return `<tr><td>${escapeHtml(c.normalized_claim)}</td><td>${c.claim_type}</td><td>${c.has_quantitative_data ? 'yes' : 'no'}</td><td>${escapeHtml(c.final_bucket || '')}</td><td>${escapeHtml(c.support_relation || '')}</td><td>${(c.risk_flags || []).map(f => `<span class="pill">${f}</span>`).join('')}</td><td>${chain}</td></tr>`;
   }).join('');
 }

@@ -107,6 +107,56 @@ class SourceRole(str, Enum):
     UNKNOWN = "unknown"
 
 
+class OrganizationType(str, Enum):
+    COMPANY = "company"
+    INSTITUTION = "institution"
+    GOVERNMENT = "government"
+    NEWS_OR_MEDIA = "news_or_media"
+    SCHOLARLY_OR_RESEARCH = "scholarly_or_research"
+    NONPROFIT = "nonprofit"
+    UNKNOWN = "unknown"
+
+
+class OfficialnessStatus(str, Enum):
+    VERIFIED_FIRST_PARTY = "verified_first_party"
+    PROBABLE_FIRST_PARTY = "probable_first_party"
+    VERIFIED_AFFILIATED_SOURCE = "verified_affiliated_source"
+    THIRD_PARTY = "third_party"
+    UNKNOWN = "unknown"
+
+
+class SourceRoleForClaim(str, Enum):
+    OFFICIAL_INSTITUTION_SOURCE = "official_institution_source"
+    OFFICIAL_COMPANY_SOURCE = "official_company_source"
+    REGULATORY_OR_FILING_SOURCE = "regulatory_or_filing_source"
+    SCHOLARLY_PRIMARY_SOURCE = "scholarly_primary_source"
+    EVIDENCE_SYNTHESIS_SOURCE = "evidence_synthesis_source"
+    SECONDARY_REPORTING_SOURCE = "secondary_reporting_source"
+    OPINION_OR_ANALYSIS_SOURCE = "opinion_or_analysis_source"
+    ANONYMOUS_OR_OPAQUE_SOURCE = "anonymous_or_opaque_source"
+    UNKNOWN_SOURCE = "unknown_source"
+
+
+class SourceToClaimRelation(str, Enum):
+    SAME_ENTITY = "same_entity"
+    PARENT_CHILD_ENTITY = "parent_child_entity"
+    AFFILIATED_ENTITY = "affiliated_entity"
+    OFFICIAL_PARTNER = "official_partner"
+    THIRD_PARTY = "third_party"
+    UNKNOWN = "unknown"
+
+
+class SupportScope(str, Enum):
+    OWN_INSTITUTIONAL_FACT = "own_institutional_fact"
+    OWN_PRODUCT_OR_PROGRAM_FACT = "own_product_or_program_fact"
+    OWN_REPORTED_DATA = "own_reported_data"
+    OFFICIAL_ANNOUNCEMENT = "official_announcement"
+    ATTRIBUTION_ONLY = "attribution_only"
+    PREMISE_SUPPORT_FOR_ANALYSIS = "premise_support_for_analysis"
+    NOT_SUFFICIENT_FOR_CLAIM = "not_sufficient_for_claim"
+    UNKNOWN = "unknown"
+
+
 class EdgeType(str, Enum):
     AUTHOR_CITED = "author_cited"
     DISCOVERED_SOURCE = "discovered_source"
@@ -180,6 +230,14 @@ class Source(BaseModel):
     extracted_text_preview: str = ""
     extracted_text: str = Field(default="", exclude=True)
     upstream_source_ids: List[str] = Field(default_factory=list)
+    source_entity: str = ""
+    registrable_domain: str = ""
+    publisher_name: str = ""
+    organization_type: OrganizationType = OrganizationType.UNKNOWN
+    entity_aliases: List[str] = Field(default_factory=list)
+    metadata_basis: List[str] = Field(default_factory=list)
+    officialness_status: OfficialnessStatus = OfficialnessStatus.UNKNOWN
+    officialness_basis: List[str] = Field(default_factory=list)
 
 
 class EvidenceEdge(BaseModel):
@@ -194,6 +252,10 @@ class EvidenceEdge(BaseModel):
     final_bucket: FinalGroundingBucket = FinalGroundingBucket.UNVERIFIABLE_OR_MISMATCH
     source_role: SourceRole = SourceRole.UNKNOWN
     upstream_source_ids: List[str] = Field(default_factory=list)
+    source_role_for_claim: SourceRoleForClaim = SourceRoleForClaim.UNKNOWN_SOURCE
+    source_to_claim_relation: SourceToClaimRelation = SourceToClaimRelation.UNKNOWN
+    support_scope: SupportScope = SupportScope.UNKNOWN
+    source_role_basis: List[str] = Field(default_factory=list)
 
 
 class Claim(BaseModel):
@@ -222,6 +284,10 @@ class Claim(BaseModel):
     not_asserted_by_author: bool = False
     evidence_quote: str = ""
     source_role: SourceRole = SourceRole.UNKNOWN
+    source_role_for_claim: SourceRoleForClaim = SourceRoleForClaim.UNKNOWN_SOURCE
+    source_to_claim_relation: SourceToClaimRelation = SourceToClaimRelation.UNKNOWN
+    support_scope: SupportScope = SupportScope.UNKNOWN
+    source_role_basis: List[str] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod
@@ -279,6 +345,8 @@ class KeyRates(BaseModel):
     opinion_packaging_rate: float = 0.0
     source_opacity_rate: float = 0.0
     citation_mismatch_rate: float = 0.0
+    premise_support_for_analysis_rate: float = 0.0
+    official_fact_support_rate: float = 0.0
 
 
 class AnalysisSummary(BaseModel):

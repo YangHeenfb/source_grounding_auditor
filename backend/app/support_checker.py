@@ -212,6 +212,12 @@ class SupportChecker:
             "publication_date": source.publication_date,
             "access_status": source.access_status.value,
             "source_type": source.source_type.value,
+            "source_entity": source.source_entity,
+            "registrable_domain": source.registrable_domain,
+            "organization_type": source.organization_type.value,
+            "entity_aliases": source.entity_aliases,
+            "officialness_status": source.officialness_status.value,
+            "officialness_basis": source.officialness_basis,
             "extracted_text": source_text[:MAX_SOURCE_TEXT_CHARS],
             "extracted_text_preview": source.extracted_text_preview,
         }

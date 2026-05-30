@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-from .providers.llm_provider import LLMProvider, LLMProviderTimeoutError
+from .providers.llm_provider import LLMProvider, LLMProviderError, LLMProviderTimeoutError
 from .providers.llm_provider import CancellationToken
 from .schemas import (
     AccessStatus,
@@ -128,6 +128,15 @@ class SupportChecker:
                         item["claim"],
                         source_id=item["source_bundle"].get("source_id"),
                         reasoning=f"Source support check timed out in this run: {exc}",
+                    )
+                    for item in llm_payloads
+                ]
+            except LLMProviderError as exc:
+                updated_claims = [
+                    self._mark_inaccessible(
+                        item["claim"],
+                        source_id=item["source_bundle"].get("source_id"),
+                        reasoning=f"Source support check could not be completed by the LLM provider in this run: {exc}",
                     )
                     for item in llm_payloads
                 ]

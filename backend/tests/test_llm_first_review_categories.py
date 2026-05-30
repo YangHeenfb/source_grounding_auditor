@@ -1,5 +1,5 @@
 from app.analyzer import SourceGroundingAnalyzer
-from app.providers.llm_provider import MockLLMProvider
+from app.providers.llm_provider import LLMProviderError, MockLLMProvider
 from app.schemas import (
     AnalysisRequest,
     Claim,
@@ -338,3 +338,32 @@ def test_citation_only_mode_excludes_uncited_text_from_claims_and_ratios():
     assert uncited_result.summary.total_claims == 0
     assert uncited_result.summary.ratios_basis == "based only on cited claims"
     assert uncited_result.uncited_claim_analysis_enabled is False
+
+
+def test_review_provider_failure_does_not_create_problematic_citations():
+    class FailingReviewProvider(MockLLMProvider):
+        async def classify_review_categories(self, claims, cancellation_token=None):
+            raise LLMProviderError("Codex CLI request failed (1): model refresh failed")
+
+    claim = make_claim(
+        "The cited source says the company reported revenue of $10 billion.",
+        claim_type=ClaimType.FACTUAL,
+        role=DiscourseRole.ASSERTED_CLAIM,
+        category=ClaimReviewCategory.HIGH_RISK,
+        importance=ImportanceLabel.CORE,
+    )
+    provider = FailingReviewProvider(extraction_outputs=[claim])
+    analyzer = SourceGroundingAnalyzer(enable_url_fetch=False, llm_provider=provider)
+
+    result = analyzer.analyze(
+        AnalysisRequest(
+            input_text="The cited source says the company reported revenue of $10 billion [1].\n\n[1] Mock citation source",
+            enable_url_fetch=False,
+            enable_web_search=False,
+        )
+    )
+
+    assert result.problematic_citations == []
+    assert result.high_risk_claims == []
+    assert len(result.audit_limited_citations) == 1
+    assert "Review classification could not be completed" in result.claims[0].reasoning_summary

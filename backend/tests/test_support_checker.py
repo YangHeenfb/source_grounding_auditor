@@ -1,4 +1,4 @@
-from app.providers.llm_provider import MockLLMProvider
+from app.providers.llm_provider import LLMProviderError, MockLLMProvider
 from app.support_checker import SupportChecker, SupportCheckInput
 from app.schemas import (
     AccessStatus,
@@ -153,3 +153,26 @@ def test_support_checker_batches_accessible_source_checks():
     assert len(results) == 2
     assert calls == {"batch": 1, "single": 0}
     assert all(edge.support_relation == SupportRelation.DIRECTLY_SUPPORTS for edge, _flags in results)
+
+
+def test_support_checker_provider_failure_becomes_audit_limited_edge():
+    class FailingSupportProvider(MockLLMProvider):
+        async def check_claim_supports(self, checks, cancellation_token=None):
+            raise LLMProviderError("Codex CLI request failed (1): model refresh failed")
+
+    claim = make_claim("The company reported revenue of $10 billion in 2024")
+    source = Source(
+        source_id="s001",
+        title="Annual report",
+        access_status=AccessStatus.ACCESSIBLE,
+        source_type=SourceType.PRIMARY_FACT_SOURCE,
+        extracted_text="The company reported revenue of $10 billion in 2024.",
+        extracted_text_preview="The company reported revenue of $10 billion in 2024.",
+    )
+
+    edge, flags = SupportChecker(FailingSupportProvider()).check(claim, source)
+
+    assert edge.support_relation == SupportRelation.INACCESSIBLE
+    assert edge.final_bucket == FinalGroundingBucket.UNVERIFIABLE_OR_MISMATCH
+    assert RiskFlag.INACCESSIBLE_SOURCE in flags
+    assert "could not be completed by the LLM provider" in edge.reasoning_summary

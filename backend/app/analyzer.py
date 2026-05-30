@@ -18,6 +18,7 @@ from .providers.llm_provider import (
     CodexCLILLMProvider,
     LLMProvider,
     LLMProviderConfigurationError,
+    LLMProviderError,
     LLMProviderTimeoutError,
     MockLLMProvider,
     OpenAILLMProvider,
@@ -404,6 +405,10 @@ class SourceGroundingAnalyzer:
             for claim in claims:
                 _apply_timeout_review_fallback(claim, exc)
             return claims
+        except LLMProviderError as exc:
+            for claim in claims:
+                _apply_provider_error_review_fallback(claim, exc)
+            return claims
         for claim, updated in zip(claims, updated_claims):
             claim.review_category = updated.review_category
             if updated.reasoning_summary:
@@ -465,6 +470,20 @@ def _apply_timeout_review_fallback(claim: Claim, exc: LLMProviderTimeoutError) -
     else:
         claim.review_category = ClaimReviewCategory.FLAGGED_BUT_NOT_HIGH_RISK
     claim.reasoning_summary = f"Review classification timed out: {exc}"
+    _apply_audit_limited_override(claim)
+
+
+def _apply_provider_error_review_fallback(claim: Claim, exc: LLMProviderError) -> None:
+    if claim.claim_type == ClaimType.NON_CLAIM or claim.not_asserted_by_author:
+        claim.review_category = ClaimReviewCategory.EXCLUDED_OR_CONTEXT
+    elif claim.support_relation and claim.support_relation.value == "inaccessible":
+        claim.review_category = ClaimReviewCategory.AUDIT_LIMITED
+    else:
+        claim.review_category = ClaimReviewCategory.FLAGGED_BUT_NOT_HIGH_RISK
+    claim.reasoning_summary = (
+        "Review classification could not be completed by the LLM provider in this run; "
+        f"no problematic citation is assigned without structured review. Provider error: {exc}"
+    )
     _apply_audit_limited_override(claim)
 
 

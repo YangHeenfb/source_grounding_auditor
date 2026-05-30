@@ -3,7 +3,8 @@ from __future__ import annotations
 import re
 from typing import Iterable, List, Protocol
 
-from .citation_parser import extract_source_mentions
+from .citation_parser import extract_source_mentions, parse_citations
+from .providers.llm_provider import LLMProvider
 from .schemas import Claim, ClaimType, ImportanceLabel
 
 SENTENCE_RE = re.compile(r".+?(?:[.!?。！？](?=\s|$)|$)", re.MULTILINE)
@@ -137,6 +138,29 @@ def _importance_for_text(text: str, claim_type: ClaimType) -> ImportanceLabel:
 class ClaimExtractor(Protocol):
     def extract_claims(self, input_text: str, original_question: str | None = None) -> list[Claim]:
         ...
+
+
+class LLMClaimExtractor:
+    """LLM-first claim extractor.
+
+    Citation parsing stays deterministic. Semantic decomposition and discourse-role
+    classification are delegated to the configured structured LLM provider.
+    """
+
+    def __init__(self, provider: LLMProvider):
+        self.provider = provider
+
+    def extract_claims(self, input_text: str, original_question: str | None = None) -> list[Claim]:
+        import asyncio
+
+        citations = parse_citations(input_text)
+        context = {"original_question": original_question}
+        coroutine = self.provider.extract_claims(input_text, citations, context)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coroutine)
+        raise RuntimeError("LLMClaimExtractor cannot run inside an already running event loop.") from None
 
 
 class RuleBasedClaimExtractor:

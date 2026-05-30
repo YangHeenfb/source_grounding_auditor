@@ -12,6 +12,7 @@ from .schemas import (
     GroundingMix,
     KeyRates,
     RiskFlag,
+    SourceOpacity,
     SupportRelation,
     SupportRelationMix,
 )
@@ -42,6 +43,7 @@ class RatioReporter:
             weak_fact_grounding=_ratio(bucket_counts[GroundingBucket.WEAK_FACT_GROUNDING.value], denom),
             attribution_or_opinion_grounding=_ratio(bucket_counts[GroundingBucket.ATTRIBUTION_OR_OPINION_GROUNDING.value], denom),
             unverifiable_or_mismatch=_ratio(bucket_counts[GroundingBucket.UNVERIFIABLE_OR_MISMATCH.value], denom),
+            excluded_or_context=_ratio(bucket_counts[GroundingBucket.EXCLUDED_OR_CONTEXT.value], denom),
         )
 
         relation_counts = Counter((c.support_relation or SupportRelation.INACCESSIBLE).value for c in auditable)
@@ -55,11 +57,25 @@ class RatioReporter:
             no_support=_ratio(relation_counts[SupportRelation.NO_SUPPORT.value], denom),
             contradicts=_ratio(relation_counts[SupportRelation.CONTRADICTS.value], denom),
             inaccessible=_ratio(relation_counts[SupportRelation.INACCESSIBLE.value], denom),
+            not_checked=_ratio(relation_counts[SupportRelation.NOT_CHECKED.value], denom),
         )
 
         opinion_packaging = sum(1 for c in auditable if RiskFlag.OPINION_USED_AS_FACT in c.risk_flags)
-        opacity_flags = {RiskFlag.ANONYMOUS_SOURCE, RiskFlag.VAGUE_SOURCE, RiskFlag.INACCESSIBLE_SOURCE}
-        source_opacity = sum(1 for c in auditable if any(flag in opacity_flags for flag in c.risk_flags))
+        opacity_flags = {
+            RiskFlag.ANONYMOUS_SOURCE,
+            RiskFlag.VAGUE_SOURCE,
+            RiskFlag.NAMED_SECONDARY_WITH_OPAQUE_UNDERLYING,
+        }
+        opaque_source_labels = {
+            SourceOpacity.ANONYMOUS_SOURCE,
+            SourceOpacity.VAGUE_SOURCE_MENTION,
+            SourceOpacity.NAMED_SECONDARY_WITH_OPAQUE_UNDERLYING,
+        }
+        source_opacity = sum(
+            1
+            for c in auditable
+            if c.source_opacity in opaque_source_labels or any(flag in opacity_flags for flag in c.risk_flags)
+        )
         mismatch_flags = {
             RiskFlag.SOURCE_CLAIM_MISMATCH,
             RiskFlag.SOURCE_ONLY_SUPPORTS_WEAKER_CLAIM,

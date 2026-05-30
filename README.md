@@ -5,6 +5,7 @@
 ## 当前能力
 
 - 输入 AI 回答、文章正文或带 citation 的文本。
+- 默认使用 citation-only mode：只分析带 citation 的句子或段落；未带 citation 的内容不进入 claims，也不进入 ratios。
 - 抽取并粗略拆分 atomic claims。
 - 解析 URL、Markdown citation、脚注和参考文献 URL。
 - 将 claim 分为 factual、attribution、judgment、non_claim。
@@ -24,10 +25,20 @@
 - 提供高风险 claim 列表。
 - 提供简单 Web UI。
 
+## LLM-first structured classification
+
+本项目使用 LLM first structured classification。启发式规则只用于 citation parsing、schema validation、fallback 和测试，不用于核心语义判断。
+
+`risk_flag` 是底层诊断，不等于 problematic citation。`problematic_citations` 只表示 cited claims 中作者真实主张的、重要的、且证据关系存在实质问题的 citation。
+
+`audit_limited_citations` 只表示本轮无法完成 source support check，不表示 claim 错误。`attribution_supported_citations` 表示 source 支持“某来源说过这件事”，不表示被转述内容本身已被一手事实证明。
+
+所有比例默认都基于 cited claims，响应中的 `summary.ratios_basis` 会写明 `based only on cited claims`。预留字段 `uncited_claim_analysis_enabled` 当前默认为 `false`。
+
 ## 重要限制
 
-- 当前 claim extraction 默认使用 Codex 订阅的 GPT-5.5，也支持 OpenAI API。
-- 当前 source support check 是启发式判断，不是严格事实核查。
+- 当前 claim extraction 默认使用 Codex CLI 的快速结构化模式，也支持 OpenAI API。
+- 当前 source support check 依赖结构化 LLM 判断，不是严格事实核查。
 - 默认抓取外部网页。可在 API 请求中传 `enable_url_fetch=false` 关闭显式 URL 抓取。
 - 默认搜索无 URL 的来源说明。可在 API 请求中传 `enable_web_search=false` 关闭搜索。
 - 当前搜索 provider 使用 no-key DuckDuckGo HTML 搜索，搜索结果质量会影响 discovered source 的准确性。
@@ -58,7 +69,7 @@ curl http://127.0.0.1:8000/health
 
 ## LLM claim extraction 测试
 
-默认请求走 Codex 订阅的 GPT-5.5。先确认本机 Codex 已登录：
+默认请求走 Codex CLI 的快速结构化模式。先确认本机 Codex 已登录：
 
 ```bash
 codex login status
@@ -75,12 +86,13 @@ curl -X POST http://127.0.0.1:8000/analyze \
   }'
 ```
 
-默认 Codex 模型是 `gpt-5.5`，可以用环境变量覆盖：
+默认 Codex 模型是 `gpt-5.3-codex-spark`，可以用环境变量覆盖：
 
 ```bash
-export CODEX_MODEL="gpt-5.5"
+export CODEX_MODEL="gpt-5.3-codex-spark"
 export CODEX_SERVICE_TIER="fast"  # 可选，默认 fast
-export CODEX_TIMEOUT_SECONDS="900"  # 可选，默认 900 秒
+export CODEX_REASONING_EFFORT="low"  # 可选，默认 low
+export CODEX_TIMEOUT_SECONDS="90"  # 可选，默认 90 秒
 ```
 
 如需测试 OpenAI API 抽取，先在启动后端的同一个 shell 设置 API key：

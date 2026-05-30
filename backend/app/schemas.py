@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ClaimType(str, Enum):
@@ -16,13 +16,36 @@ class ClaimType(str, Enum):
 class ImportanceLabel(str, Enum):
     CORE = "core"
     SUPPORTING = "supporting"
-    BACKGROUND = "background"
+    MINOR = "minor"
+    # Backward-compatible alias for older tests and callers.
+    BACKGROUND = "minor"
+
+
+class DiscourseRole(str, Enum):
+    ASSERTED_CLAIM = "asserted_claim"
+    ATTRIBUTION_REPORT = "attribution_report"
+    JUDGMENT_OR_ANALYSIS = "judgment_or_analysis"
+    CAVEAT_OR_LIMITATION = "caveat_or_limitation"
+    UNSUPPORTED_EXAMPLE = "unsupported_example"
+    SOURCE_POINTER = "source_pointer"
+    USER_QUESTION = "user_question"
+    SECTION_HEADING = "section_heading"
+    CONTEXT_OR_TRANSITION = "context_or_transition"
+
+
+class SourceOpacity(str, Enum):
+    CLEAR_NAMED_SOURCE = "clear_named_source"
+    NAMED_SECONDARY_WITH_OPAQUE_UNDERLYING = "named_secondary_with_opaque_underlying"
+    VAGUE_SOURCE_MENTION = "vague_source_mention"
+    ANONYMOUS_SOURCE = "anonymous_source"
+    NOT_APPLICABLE = "not_applicable"
 
 
 class ClaimExtractionMode(str, Enum):
     OPENAI = "openai"
     CODEX = "codex"
     CODEX_CLI = "codex_cli"
+    MOCK = "mock"
     AUTO = "auto"
 
 
@@ -52,13 +75,36 @@ class SupportRelation(str, Enum):
     NO_SUPPORT = "no_support"
     CONTRADICTS = "contradicts"
     INACCESSIBLE = "inaccessible"
+    NOT_CHECKED = "not_checked"
 
 
-class GroundingBucket(str, Enum):
+class FinalGroundingBucket(str, Enum):
     HARD_FACT_GROUNDING = "hard_fact_grounding"
     WEAK_FACT_GROUNDING = "weak_fact_grounding"
     ATTRIBUTION_OR_OPINION_GROUNDING = "attribution_or_opinion_grounding"
     UNVERIFIABLE_OR_MISMATCH = "unverifiable_or_mismatch"
+    EXCLUDED_OR_CONTEXT = "excluded_or_context"
+
+
+# Backward-compatible public name used by the original MVP.
+GroundingBucket = FinalGroundingBucket
+
+
+class ClaimReviewCategory(str, Enum):
+    HIGH_RISK = "high_risk"
+    ATTRIBUTION_SUPPORTED = "attribution_supported"
+    AUDIT_LIMITED = "audit_limited"
+    FLAGGED_BUT_NOT_HIGH_RISK = "flagged_but_not_high_risk"
+    EXCLUDED_OR_CONTEXT = "excluded_or_context"
+
+
+class SourceRole(str, Enum):
+    PRIMARY_FACT_SOURCE = "primary_fact_source"
+    SECONDARY_REPORT = "secondary_report"
+    OPINION_OR_ANALYSIS = "opinion_or_analysis"
+    OFFICIAL_ANNOUNCEMENT = "official_announcement"
+    ANONYMOUS_REPORTING = "anonymous_reporting"
+    UNKNOWN = "unknown"
 
 
 class EdgeType(str, Enum):
@@ -78,18 +124,23 @@ class EdgeBasis(str, Enum):
 
 
 class RiskFlag(str, Enum):
-    SOURCE_CLAIM_MISMATCH = "source_claim_mismatch"
-    CAUSAL_OVERCLAIM = "causal_overclaim"
-    CORRELATION_PRESENTED_AS_CAUSATION = "correlation_presented_as_causation"
-    OUTDATED_SOURCE = "outdated_source"
-    ANONYMOUS_SOURCE = "anonymous_source"
-    VAGUE_SOURCE = "vague_source"
     INACCESSIBLE_SOURCE = "inaccessible_source"
-    OPINION_USED_AS_FACT = "opinion_used_as_fact"
-    SECONDARY_SOURCE_ONLY = "secondary_source_only"
-    QUANTITATIVE_CLAIM_WITHOUT_PRIMARY_DATA = "quantitative_claim_without_primary_data"
-    OVERGENERALIZATION = "overgeneralization"
+    VAGUE_SOURCE = "vague_source"
+    ANONYMOUS_SOURCE = "anonymous_source"
+    NAMED_SECONDARY_WITH_OPAQUE_UNDERLYING = "named_secondary_with_opaque_underlying"
+    SOURCE_CLAIM_MISMATCH = "source_claim_mismatch"
+    CORRELATION_PRESENTED_AS_CAUSATION = "correlation_presented_as_causation"
     SOURCE_ONLY_SUPPORTS_WEAKER_CLAIM = "source_only_supports_weaker_claim"
+    OPINION_USED_AS_FACT = "opinion_used_as_fact"
+    QUANTITATIVE_CLAIM_WITHOUT_PRIMARY_DATA = "quantitative_claim_without_primary_data"
+    ATTRIBUTION_DROPPED = "attribution_dropped"
+    UNSUPPORTED_CAUSAL_OR_STRATEGIC_INFERENCE = "unsupported_causal_or_strategic_inference"
+    NOT_ASSERTED_BY_AUTHOR = "not_asserted_by_author"
+    # Legacy diagnostic flags kept so older API payloads still validate.
+    CAUSAL_OVERCLAIM = "causal_overclaim"
+    OUTDATED_SOURCE = "outdated_source"
+    SECONDARY_SOURCE_ONLY = "secondary_source_only"
+    OVERGENERALIZATION = "overgeneralization"
 
 
 class ParsedCitation(BaseModel):
@@ -136,26 +187,62 @@ class EvidenceEdge(BaseModel):
     source_id: Optional[str] = None
     edge_type: EdgeType = EdgeType.AUTHOR_CITED
     basis: EdgeBasis = EdgeBasis.NONE
-    support_relation: SupportRelation = SupportRelation.INACCESSIBLE
+    support_relation: SupportRelation = SupportRelation.NOT_CHECKED
     evidence_span: str = ""
+    evidence_quote: str = ""
     reasoning_summary: str = ""
-    final_bucket: GroundingBucket = GroundingBucket.UNVERIFIABLE_OR_MISMATCH
+    final_bucket: FinalGroundingBucket = FinalGroundingBucket.UNVERIFIABLE_OR_MISMATCH
+    source_role: SourceRole = SourceRole.UNKNOWN
     upstream_source_ids: List[str] = Field(default_factory=list)
 
 
 class Claim(BaseModel):
+    model_config = ConfigDict(use_enum_values=False)
+
     claim_id: str
     original_text_span: str
+    original_span: str = ""
     normalized_claim: str
     claim_type: ClaimType
+    discourse_role: DiscourseRole = DiscourseRole.ASSERTED_CLAIM
+    source_opacity: SourceOpacity = SourceOpacity.NOT_APPLICABLE
     has_quantitative_data: bool = False
+    has_material_quantitative_data: bool = False
     source_mentions: List[str] = Field(default_factory=list)
     importance_label: ImportanceLabel = ImportanceLabel.SUPPORTING
+    attributed_to: Optional[str] = None
     linked_source_ids: List[str] = Field(default_factory=list)
-    final_bucket: Optional[GroundingBucket] = None
-    support_relation: Optional[SupportRelation] = None
+    final_bucket: Optional[FinalGroundingBucket] = None
+    support_relation: Optional[SupportRelation] = SupportRelation.NOT_CHECKED
+    review_category: ClaimReviewCategory = ClaimReviewCategory.FLAGGED_BUT_NOT_HIGH_RISK
     risk_flags: List[RiskFlag] = Field(default_factory=list)
     evidence_chain: List[EvidenceEdge] = Field(default_factory=list)
+    reasoning_summary: str = ""
+    evidence_needed: List[str] = Field(default_factory=list)
+    not_asserted_by_author: bool = False
+    evidence_quote: str = ""
+    source_role: SourceRole = SourceRole.UNKNOWN
+
+    @model_validator(mode="before")
+    @classmethod
+    def _sync_span_fields(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        if not data.get("original_text_span") and data.get("original_span"):
+            data["original_text_span"] = data["original_span"]
+        if not data.get("original_span") and data.get("original_text_span"):
+            data["original_span"] = data["original_text_span"]
+        if data.get("importance_label") == "background":
+            data["importance_label"] = "minor"
+        return data
+
+    @model_validator(mode="after")
+    def _default_contextual_fields(self) -> "Claim":
+        if not self.original_span:
+            self.original_span = self.original_text_span
+        if self.not_asserted_by_author and RiskFlag.NOT_ASSERTED_BY_AUTHOR not in self.risk_flags:
+            self.risk_flags.append(RiskFlag.NOT_ASSERTED_BY_AUTHOR)
+        return self
 
 
 class ContentMix(BaseModel):
@@ -170,6 +257,7 @@ class GroundingMix(BaseModel):
     weak_fact_grounding: float = 0.0
     attribution_or_opinion_grounding: float = 0.0
     unverifiable_or_mismatch: float = 0.0
+    excluded_or_context: float = 0.0
 
 
 class SupportRelationMix(BaseModel):
@@ -182,6 +270,7 @@ class SupportRelationMix(BaseModel):
     no_support: float = 0.0
     contradicts: float = 0.0
     inaccessible: float = 0.0
+    not_checked: float = 0.0
 
 
 class KeyRates(BaseModel):
@@ -196,6 +285,7 @@ class AnalysisSummary(BaseModel):
     total_claims: int = 0
     auditable_claims: int = 0
     non_claim_items: int = 0
+    ratios_basis: str = "based only on cited claims"
     content_mix: ContentMix = Field(default_factory=ContentMix)
     grounding_mix: GroundingMix = Field(default_factory=GroundingMix)
     support_relation_mix: SupportRelationMix = Field(default_factory=SupportRelationMix)
@@ -206,6 +296,7 @@ class AnalysisRequest(BaseModel):
     input_text: str = Field(..., min_length=1)
     original_question: Optional[str] = None
     mode: str = "ai_answer_or_article"
+    uncited_claim_analysis_enabled: bool = False
     claim_extraction_mode: Optional[ClaimExtractionMode] = None
     max_upstream_depth: int = Field(default=2, ge=0, le=3)
     enable_url_fetch: bool = True
@@ -214,12 +305,16 @@ class AnalysisRequest(BaseModel):
     provided_sources: List[ProvidedSource] = Field(default_factory=list)
 
 
-class HighRiskClaim(BaseModel):
+class ClaimReviewItem(BaseModel):
     claim_id: str
     normalized_claim: str
+    category: ClaimReviewCategory = ClaimReviewCategory.FLAGGED_BUT_NOT_HIGH_RISK
     risk_flags: List[RiskFlag]
-    final_bucket: Optional[GroundingBucket]
+    final_bucket: Optional[FinalGroundingBucket]
     support_relation: Optional[SupportRelation]
+    discourse_role: DiscourseRole = DiscourseRole.ASSERTED_CLAIM
+    source_opacity: SourceOpacity = SourceOpacity.NOT_APPLICABLE
+    importance_label: ImportanceLabel = ImportanceLabel.SUPPORTING
     explanation: str = ""
 
 
@@ -228,5 +323,20 @@ class AnalysisResult(BaseModel):
     summary: AnalysisSummary
     claims: List[Claim]
     sources: List[Source] = Field(default_factory=list)
-    high_risk_claims: List[HighRiskClaim] = Field(default_factory=list)
+    problematic_citations: List[ClaimReviewItem] = Field(default_factory=list)
+    audit_limited_citations: List[ClaimReviewItem] = Field(default_factory=list)
+    attribution_supported_citations: List[ClaimReviewItem] = Field(default_factory=list)
+    flagged_citations: List[ClaimReviewItem] = Field(default_factory=list)
+    excluded_or_context_citations: List[ClaimReviewItem] = Field(default_factory=list)
+    uncited_claim_analysis_enabled: bool = False
+    # Deprecated compatibility mirrors. New clients should use the *_citations fields above.
+    high_risk_claims: List[ClaimReviewItem] = Field(default_factory=list)
+    flagged_claims: List[ClaimReviewItem] = Field(default_factory=list)
+    audit_limited_claims: List[ClaimReviewItem] = Field(default_factory=list)
+    attribution_supported_claims: List[ClaimReviewItem] = Field(default_factory=list)
+    excluded_or_context_claims: List[ClaimReviewItem] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+# Backward-compatible import name.
+HighRiskClaim = ClaimReviewItem

@@ -2,6 +2,14 @@
 
 这个项目第一版是 citation terminal audit：给定带 citation 的文章或 AI 回答，统计已标注 citation 最终落到事实、观点还是无法审计。它不判断观点真假，不评价整篇文章可信度，也不输出单一可信度分数。
 
+## About
+
+Source Grounding Auditor 是一个引用最终落点审计工具。它面向带 citation 的文章、研究笔记和 AI 回答，把“引用是否可靠”拆成一个更具体的问题：这条 citation 最终是落到事实来源、停在观点来源、无法审计，还是和被引用陈述不对应。
+
+项目第一版采用 citation-only mode，只分析已经标注 citation 的内容，不把未引用段落混进统计。后端保留 claim extraction、support relation、risk flags 等结构化诊断字段，但默认产品界面只展示用户真正需要的四类结果：事实终点、观点终点、无法审计和引用错配 warning。
+
+它不判断观点本身对错，也不试图给整篇文章打一个可信度分数。它的目标是让用户快速看清一篇文章或 AI 回答的引用链最终落在哪里。
+
 ## 当前能力
 
 - 输入 AI 回答、文章正文或带 citation 的文本。

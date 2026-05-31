@@ -1,30 +1,42 @@
 # Source Grounding Auditor MVP
 
-这个项目实现了一个“来源支撑审计工具”的可运行 MVP。它不判断观点对错，不输出单一可信度分数，而是把输入文本拆成 atomic claims，分析每条 claim 的来源支撑状态，并输出比例。
+这个项目第一版是 citation terminal audit：给定带 citation 的文章或 AI 回答，统计已标注 citation 最终落到事实、观点还是无法审计。它不判断观点真假，不评价整篇文章可信度，也不输出单一可信度分数。
 
 ## 当前能力
 
 - 输入 AI 回答、文章正文或带 citation 的文本。
-- 默认使用 citation-only mode：只分析带 citation 的句子或段落；未带 citation 的内容不进入 claims，也不进入 ratios。
-- 抽取并粗略拆分 atomic claims。
+- 默认使用 citation-only mode：只分析带 citation 的句子或段落；未带 citation 的内容不进入终点统计。
 - 解析 URL、Markdown citation、脚注和参考文献 URL。
-- 将 claim 分为 factual、attribution、judgment、non_claim。
-- 将数据作为标签：has_quantitative_data。
+- 将每个 cited statement 的最终落点分为 FACT、OPINION、UNRESOLVED、MISMATCH。
+- 主界面用饼图展示事实终点、观点终点、无法审计；引用错配作为 warning badge 单独显示。
+- 输出一个聚合证据树：文档 -> 引用分组 -> 来源 -> 终点。
+- 点击来源或终点节点查看具体 cited_text 列表。
+- 内部仍抽取 atomic claims，并保留 claim 分类、source support relation、risk flags 等 debug 字段。
 - 支持 provided_sources，用于把 citation URL 映射到用户提供的 source text。
 - 默认抓取显式 URL。
 - 默认搜索无 URL 的 `[1] Reuters ...` 来源说明，发现候选公开来源。
 - 输出以下比例：
-  - 内容构成比例
-  - 来源链终点比例
-  - 支撑关系比例
-  - 事实支撑成立率
-  - 部分或弱支撑率
-  - 归属支撑率
-  - 分析判断前提支撑率
-  - 审计受限率
-  - 引用错配率
-- 提供 problematic citation 列表。
+  - 事实终点比例
+  - 观点终点比例
+  - 无法审计比例
+  - 引用错配数量
+- 保留旧的 claim 级 API 字段用于调试和兼容。
 - 提供简单 Web UI。
+
+## Citation terminal audit
+
+本项目第一版产品定义是 citation terminal audit。
+
+它不判断观点真假，不评价整篇文章可信度，只统计已标注 citation 最终落到事实、观点还是无法审计。
+
+终点分类：
+
+- `FACT`：citation 最终落到良好定义的事实来源，例如官方页面、原始数据、法律法规、公司公告、财报、论文、报告中的具体数据、访谈原文或 transcript。
+- `OPINION`：citation 最终停在观点、评论、博客、媒体分析、专家判断、投资观点、建议或价值判断，且继续追溯后没有落到事实来源。
+- `UNRESOLVED`：source 不可访问、source body 缺失、citation 没有 URL、网页抓取失败，或本轮无法判断最终落点。
+- `MISMATCH`：source 可访问且有相关片段，但 source 明显不支持 cited statement，或与 cited statement 矛盾。
+
+内部 claim 分类和 support relation 只用于后端，不是用户主界面。
 
 ## LLM-first structured classification
 
@@ -40,9 +52,9 @@
 
 内部诊断标签不是用户端展示标签。`claim_type`、`discourse_role`、`support_relation`、`final_bucket`、`risk_flags` 等字段仍然保留用于 debug、测试和后续分析，但默认 UI 不直接把它们作为结果标签展示。
 
-用户端状态由 `DisplayStatusMapper` 从结构化 claim、support 和 review 结果派生，当前包括：事实支撑成立、部分或弱支撑、归属支撑、分析判断、审计受限、引用问题、已排除。`audit_limited` 不计入引用错配，`true_mismatch_rate` 只统计可用证据明确不支撑或反驳 claim 的 citation。
+用户端默认状态由 `TerminalClassifier` 从结构化 claim、support、display status 和上游来源链路派生。主界面只展示事实终点、观点终点、无法审计和引用错配 warning。`claim_type`、`discourse_role`、`support_relation`、`final_bucket`、`risk_flags` 等内部字段放在高级调试信息中。
 
-系统会为每条 cited claim 生成 evidence graph，结构为 `claim -> citation -> source -> evidence`，并在缺少 source body 或相关证据片段时显示 missing evidence 节点。证据图用于展示审计链路，内部枚举和 risk flags 放在“查看技术细节”中。
+系统会生成文档级聚合证据树，结构为 `document -> citation_group -> source -> terminal_class`。相同 source 会合并成一个节点，边和节点上显示 count。旧的每条 claim 证据图仍在 API 中保留用于调试。
 
 ## 重要限制
 

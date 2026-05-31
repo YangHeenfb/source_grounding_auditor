@@ -195,9 +195,10 @@ def test_true_problem_graph_edge_marks_no_support():
 def test_ui_hides_risk_flags_behind_technical_details():
     html = Path("backend/app/static/index.html").read_text()
 
-    assert "查看技术细节" in html
-    assert html.index("查看技术细节") < html.index("risk_flags")
+    assert "高级调试信息" in html
+    assert "claim_type、discourse_role、support_relation、final_bucket、risk_flags" in html
     assert "风险标签" not in html
     assert "不可验证或错配" not in html
     assert "Claim 明细" not in html
     assert "Ratios basis" not in html
+    assert "problematicCitations" not in html

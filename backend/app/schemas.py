@@ -109,6 +109,13 @@ class DisplayStatus(str, Enum):
     EXCLUDED_OR_CONTEXT = "excluded_or_context"
 
 
+class TerminalClass(str, Enum):
+    FACT = "fact"
+    OPINION = "opinion"
+    UNRESOLVED = "unresolved"
+    MISMATCH = "mismatch"
+
+
 class SourceRole(str, Enum):
     PRIMARY_FACT_SOURCE = "primary_fact_source"
     SECONDARY_REPORT = "secondary_report"
@@ -407,6 +414,7 @@ class AnalysisRequest(BaseModel):
     enable_url_fetch: bool = True
     enable_web_search: bool = True
     max_search_results: int = Field(default=2, ge=1, le=5)
+    max_terminal_trace_depth: int = Field(default=2, ge=0, le=5)
     provided_sources: List[ProvidedSource] = Field(default_factory=list)
 
 
@@ -465,6 +473,59 @@ class EvidenceGraph(BaseModel):
     edges: List[EvidenceGraphEdge] = Field(default_factory=list)
 
 
+class CitationTerminalResult(BaseModel):
+    citation_id: str
+    cited_text: str = ""
+    citation_label: Optional[str] = None
+    source_title: str = ""
+    source_url: Optional[str] = None
+    terminal_class: TerminalClass = TerminalClass.UNRESOLVED
+    terminal_reason: str = ""
+    path_nodes: List[Dict[str, Any]] = Field(default_factory=list)
+    path_edges: List[Dict[str, Any]] = Field(default_factory=list)
+    depth: int = 0
+    short_explanation: str = ""
+    debug_claim_ids: List[str] = Field(default_factory=list)
+    debug_tags: List[str] = Field(default_factory=list)
+
+
+class DocumentEvidenceSummary(BaseModel):
+    total_cited_statements: int = 0
+    fact_terminal_count: int = 0
+    opinion_terminal_count: int = 0
+    unresolved_terminal_count: int = 0
+    mismatch_count: int = 0
+    fact_terminal_ratio: float = 0.0
+    opinion_terminal_ratio: float = 0.0
+    unresolved_ratio: float = 0.0
+
+
+class DocumentEvidenceGraphNode(BaseModel):
+    id: str
+    type: str
+    label: str
+    count: int = 0
+    terminal_class: Optional[TerminalClass] = None
+    source_id: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class DocumentEvidenceGraphEdge(BaseModel):
+    id: str
+    source: str
+    target: str
+    type: str
+    label: str = ""
+    count: int = 0
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class DocumentEvidenceGraph(BaseModel):
+    graph_id: str = "document-evidence-graph"
+    nodes: List[DocumentEvidenceGraphNode] = Field(default_factory=list)
+    edges: List[DocumentEvidenceGraphEdge] = Field(default_factory=list)
+
+
 class AnalysisResult(BaseModel):
     analysis_id: str
     summary: AnalysisSummary
@@ -472,6 +533,9 @@ class AnalysisResult(BaseModel):
     sources: List[Source] = Field(default_factory=list)
     display_citations: List[DisplayCitationResult] = Field(default_factory=list)
     evidence_graphs: List[EvidenceGraph] = Field(default_factory=list)
+    citation_terminal_results: List[CitationTerminalResult] = Field(default_factory=list)
+    document_evidence_summary: DocumentEvidenceSummary = Field(default_factory=DocumentEvidenceSummary)
+    document_evidence_graph: DocumentEvidenceGraph = Field(default_factory=DocumentEvidenceGraph)
     problematic_citations: List[ClaimReviewItem] = Field(default_factory=list)
     audit_limited_citations: List[ClaimReviewItem] = Field(default_factory=list)
     attribution_supported_citations: List[ClaimReviewItem] = Field(default_factory=list)

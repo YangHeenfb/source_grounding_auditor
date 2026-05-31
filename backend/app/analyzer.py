@@ -16,6 +16,7 @@ from .citation_parser import FOOTNOTE_REF_RE
 from .citation_units import build_citation_units, parsed_citation_for_unit
 from .claim_aware_source_role_classifier import classify_claim_source_role
 from .display_status_mapper import map_claims_to_display_results
+from .document_evidence_graph_builder import build_document_evidence_graph
 from .evidence_graph_builder import build_evidence_graphs
 from .official_domain_verifier import OfficialDomainVerificationResult
 from .providers.llm_provider import (
@@ -53,6 +54,7 @@ from .schemas import (
 from .source_entity_resolver import SourceEntityResolution
 from .source_fetcher import SourceFetcher
 from .support_checker import SupportChecker, SupportCheckInput
+from .terminal_classifier import build_document_evidence_summary, classify_citation_terminals
 from .upstream_tracer import UpstreamTracer
 
 ProgressCallback = Callable[[dict[str, Any]], None]
@@ -357,6 +359,14 @@ class SourceGroundingAnalyzer:
         _emit_progress(progress_callback, "summarizing", "Building audit summary.", 0, None)
         display_citations = map_claims_to_display_results(claims)
         evidence_graphs = build_evidence_graphs(claims, sources_by_id)
+        citation_terminal_results = classify_citation_terminals(
+            claims,
+            display_citations,
+            sources_by_id,
+            max_terminal_trace_depth=request.max_terminal_trace_depth,
+        )
+        document_evidence_summary = build_document_evidence_summary(citation_terminal_results)
+        document_evidence_graph = build_document_evidence_graph(citation_terminal_results)
         summary = self.reporter.build_summary(claims, display_citations=display_citations)
         summary.ratios_basis = (
             "based on all extracted claims"
@@ -403,6 +413,9 @@ class SourceGroundingAnalyzer:
             sources=list(sources_by_id.values()),
             display_citations=display_citations,
             evidence_graphs=evidence_graphs,
+            citation_terminal_results=citation_terminal_results,
+            document_evidence_summary=document_evidence_summary,
+            document_evidence_graph=document_evidence_graph,
             problematic_citations=problematic_citations,
             audit_limited_citations=audit_limited_citations,
             attribution_supported_citations=attribution_supported_citations,
@@ -447,6 +460,7 @@ class SourceGroundingAnalyzer:
                     else None
                 ),
                 "max_upstream_depth": request.max_upstream_depth,
+                "max_terminal_trace_depth": request.max_terminal_trace_depth,
                 "enable_url_fetch": request.enable_url_fetch or self.enable_url_fetch,
                 "enable_web_search": request.enable_web_search,
                 "citation_count": len(citations),

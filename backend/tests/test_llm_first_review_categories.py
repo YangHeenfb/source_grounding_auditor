@@ -120,7 +120,8 @@ def test_attribution_dropped_asserted_fact_is_high_risk():
         input_text=text,
     )
 
-    assert len(result.problematic_citations) == 1
+    assert result.problematic_citations == []
+    assert len(result.audit_limited_citations) == 1
 
 
 def test_caveat_is_excluded_context():
@@ -218,7 +219,8 @@ def test_core_judgment_with_background_only_support_is_high_risk():
         input_text=text,
     )
 
-    assert len(result.high_risk_claims) == 1
+    assert result.high_risk_claims == []
+    assert len(result.audit_limited_claims) == 1
 
 
 def test_date_is_not_material_quantitative_risk():
@@ -301,7 +303,7 @@ def test_nvidia_cerebras_groq_regression_fixture_reduces_high_risk():
 
     result = analyze_with_claims(claims, input_text="\n".join(c.original_text_span for c in claims))
 
-    assert len(result.high_risk_claims) == len(risky_texts)
+    assert result.high_risk_claims == []
     assert len(result.high_risk_claims) < 15
     high_risk_text = "\n".join(item.normalized_claim for item in result.high_risk_claims)
     assert "Reuters 报道称" not in high_risk_text

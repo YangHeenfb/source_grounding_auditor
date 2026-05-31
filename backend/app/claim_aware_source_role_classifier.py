@@ -213,6 +213,8 @@ def _official_fact_scope(claim_text: str) -> SupportScope:
         return SupportScope.OFFICIAL_ANNOUNCEMENT
     if _contains_any(claim_text, REPORTED_DATA_TERMS) or re.search(r"\d+(?:\.\d+)?\s*[%％]", claim_text):
         return SupportScope.OWN_REPORTED_DATA
+    if _contains_any(claim_text, ["学位", "degree", "校友", "alumni", "毕业", "graduation"]):
+        return SupportScope.OWN_INSTITUTIONAL_FACT
     if _contains_any(claim_text, PROGRAM_TERMS):
         return SupportScope.OWN_PRODUCT_OR_PROGRAM_FACT
     return SupportScope.OWN_INSTITUTIONAL_FACT

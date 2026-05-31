@@ -75,6 +75,7 @@ class SupportRelation(str, Enum):
     NO_SUPPORT = "no_support"
     CONTRADICTS = "contradicts"
     INACCESSIBLE = "inaccessible"
+    AUDIT_LIMITED_NO_RELEVANT_SNIPPET = "audit_limited_no_relevant_snippet"
     NOT_CHECKED = "not_checked"
 
 
@@ -95,6 +96,16 @@ class ClaimReviewCategory(str, Enum):
     ATTRIBUTION_SUPPORTED = "attribution_supported"
     AUDIT_LIMITED = "audit_limited"
     FLAGGED_BUT_NOT_HIGH_RISK = "flagged_but_not_high_risk"
+    EXCLUDED_OR_CONTEXT = "excluded_or_context"
+
+
+class DisplayStatus(str, Enum):
+    VERIFIED_FACT_SUPPORT = "verified_fact_support"
+    PARTIAL_OR_WEAK_SUPPORT = "partial_or_weak_support"
+    ATTRIBUTION_SUPPORT = "attribution_support"
+    ANALYSIS_FROM_SOURCED_PREMISES = "analysis_from_sourced_premises"
+    AUDIT_LIMITED = "audit_limited"
+    TRUE_CITATION_PROBLEM = "true_citation_problem"
     EXCLUDED_OR_CONTEXT = "excluded_or_context"
 
 
@@ -175,6 +186,9 @@ class EdgeBasis(str, Enum):
 
 class RiskFlag(str, Enum):
     INACCESSIBLE_SOURCE = "inaccessible_source"
+    AUDIT_LIMITED_NO_RELEVANT_SNIPPET = "audit_limited_no_relevant_snippet"
+    SOURCE_FETCH_FAILED = "source_fetch_failed"
+    SOURCE_BODY_MISSING = "source_body_missing"
     VAGUE_SOURCE = "vague_source"
     ANONYMOUS_SOURCE = "anonymous_source"
     NAMED_SECONDARY_WITH_OPAQUE_UNDERLYING = "named_secondary_with_opaque_underlying"
@@ -201,6 +215,17 @@ class ParsedCitation(BaseModel):
     kind: EdgeBasis = EdgeBasis.EXPLICIT_LINK
     span_start: int = 0
     span_end: int = 0
+
+
+class CitationUnit(BaseModel):
+    cited_text: str
+    citation_label: Optional[str] = None
+    source_url: Optional[str] = None
+    source_title: str = ""
+    source_id: Optional[str] = None
+    source_registry_entry: str = ""
+    char_start: int = 0
+    char_end: int = 0
 
 
 class ProvidedSource(BaseModel):
@@ -288,6 +313,11 @@ class Claim(BaseModel):
     source_to_claim_relation: SourceToClaimRelation = SourceToClaimRelation.UNKNOWN
     support_scope: SupportScope = SupportScope.UNKNOWN
     source_role_basis: List[str] = Field(default_factory=list)
+    citation_label: Optional[str] = None
+    citation_source_url: Optional[str] = None
+    citation_source_title: str = ""
+    citation_source_id: Optional[str] = None
+    source_registry_entry: str = ""
 
     @model_validator(mode="before")
     @classmethod
@@ -336,10 +366,17 @@ class SupportRelationMix(BaseModel):
     no_support: float = 0.0
     contradicts: float = 0.0
     inaccessible: float = 0.0
+    audit_limited_no_relevant_snippet: float = 0.0
     not_checked: float = 0.0
 
 
 class KeyRates(BaseModel):
+    verified_fact_support_rate: float = 0.0
+    partial_or_weak_support_rate: float = 0.0
+    attribution_support_rate: float = 0.0
+    analysis_from_sourced_premises_rate: float = 0.0
+    audit_limited_rate: float = 0.0
+    true_mismatch_rate: float = 0.0
     public_fact_support_rate: float = 0.0
     loose_fact_support_rate: float = 0.0
     opinion_packaging_rate: float = 0.0
@@ -386,11 +423,55 @@ class ClaimReviewItem(BaseModel):
     explanation: str = ""
 
 
+class DisplayCitationResult(BaseModel):
+    claim_id: str
+    display_claim_text: str = ""
+    display_status: DisplayStatus = DisplayStatus.AUDIT_LIMITED
+    display_label: str = ""
+    display_explanation: str = ""
+    severity: str = "info"
+    primary_reason: str = ""
+    debug_tags: List[str] = Field(default_factory=list)
+    should_show_in_problematic: bool = False
+    should_count_as_true_mismatch: bool = False
+
+
+class EvidenceGraphNode(BaseModel):
+    id: str
+    type: str
+    label: str
+    subtitle: str = ""
+    status: str = ""
+    source_id: Optional[str] = None
+    claim_id: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class EvidenceGraphEdge(BaseModel):
+    id: str
+    source: str
+    target: str
+    label: str = ""
+    relation: str = ""
+    status: str = ""
+    basis: str = ""
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class EvidenceGraph(BaseModel):
+    graph_id: str
+    claim_id: str
+    nodes: List[EvidenceGraphNode] = Field(default_factory=list)
+    edges: List[EvidenceGraphEdge] = Field(default_factory=list)
+
+
 class AnalysisResult(BaseModel):
     analysis_id: str
     summary: AnalysisSummary
     claims: List[Claim]
     sources: List[Source] = Field(default_factory=list)
+    display_citations: List[DisplayCitationResult] = Field(default_factory=list)
+    evidence_graphs: List[EvidenceGraph] = Field(default_factory=list)
     problematic_citations: List[ClaimReviewItem] = Field(default_factory=list)
     audit_limited_citations: List[ClaimReviewItem] = Field(default_factory=list)
     attribution_supported_citations: List[ClaimReviewItem] = Field(default_factory=list)

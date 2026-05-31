@@ -5,6 +5,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from .evidence_snippet_retriever import retrieve_evidence_snippets
 from .providers.llm_provider import LLMProvider, LLMProviderError, LLMProviderTimeoutError
 from .providers.llm_provider import CancellationToken
 from .schemas import (
@@ -37,6 +38,8 @@ def bucket_for(source: Source | None, relation: SupportRelation) -> FinalGroundi
     """Non-semantic fallback used only when source text is unavailable."""
 
     if relation == SupportRelation.INACCESSIBLE:
+        return FinalGroundingBucket.UNVERIFIABLE_OR_MISMATCH
+    if relation == SupportRelation.AUDIT_LIMITED_NO_RELEVANT_SNIPPET:
         return FinalGroundingBucket.UNVERIFIABLE_OR_MISMATCH
     if relation == SupportRelation.BACKGROUND_ONLY:
         return FinalGroundingBucket.EXCLUDED_OR_CONTEXT
@@ -103,12 +106,24 @@ class SupportChecker:
                 continue
             if self.provider is None:
                 raise RuntimeError("SupportChecker requires an LLMProvider when source body is available.")
+            source_bundle = self._source_bundle(item.source, item.claim)
+            if source_bundle.get("snippet_retrieval_status") == "no_relevant_snippet":
+                updated = self._mark_no_relevant_snippet(
+                    item.claim,
+                    source_id=source_bundle.get("source_id"),
+                    reasoning="Source body was available, but no relevant evidence snippet was retrieved for this cited text.",
+                )
+                results[index] = (
+                    self._edge_from_claim(updated, item.source, edge_type=item.edge_type, basis=item.basis),
+                    list(updated.risk_flags),
+                )
+                continue
             llm_indexes.append(index)
             llm_payloads.append(
                 {
                     "check_id": f"sc{index+1:04d}",
                     "claim": item.claim,
-                    "source_bundle": self._source_bundle(item.source),
+                    "source_bundle": source_bundle,
                 }
             )
 
@@ -200,10 +215,15 @@ class SupportChecker:
 
         return None
 
-    def _source_bundle(self, source: Source | None) -> dict[str, Any]:
+    def _source_bundle(self, source: Source | None, claim: Claim) -> dict[str, Any]:
         if source is None:
             return {}
         source_text = source.extracted_text or ""
+        snippets = retrieve_evidence_snippets(
+            " ".join(part for part in [claim.original_text_span, claim.normalized_claim] if part),
+            source_text,
+        )
+        snippet_text = "\n".join(snippet.text for snippet in snippets)
         return {
             "source_id": source.source_id,
             "url": source.url,
@@ -218,7 +238,12 @@ class SupportChecker:
             "entity_aliases": source.entity_aliases,
             "officialness_status": source.officialness_status.value,
             "officialness_basis": source.officialness_basis,
-            "extracted_text": source_text[:MAX_SOURCE_TEXT_CHARS],
+            "evidence_snippets": [
+                {"text": snippet.text, "score": snippet.score, "basis": snippet.basis}
+                for snippet in snippets
+            ],
+            "snippet_retrieval_status": "ok" if snippets else "no_relevant_snippet",
+            "extracted_text": snippet_text[:MAX_SOURCE_TEXT_CHARS],
             "extracted_text_preview": source.extracted_text_preview,
         }
 
@@ -231,6 +256,20 @@ class SupportChecker:
         if RiskFlag.INACCESSIBLE_SOURCE not in flags:
             flags.append(RiskFlag.INACCESSIBLE_SOURCE)
         updated.risk_flags = list(dict.fromkeys(flags))
+        return updated
+
+    def _mark_no_relevant_snippet(self, claim: Claim, *, source_id: str | None, reasoning: str) -> Claim:
+        updated = claim.model_copy(deep=True)
+        updated.support_relation = SupportRelation.AUDIT_LIMITED_NO_RELEVANT_SNIPPET
+        updated.final_bucket = FinalGroundingBucket.UNVERIFIABLE_OR_MISMATCH
+        updated.reasoning_summary = reasoning
+        flags = list(updated.risk_flags)
+        if RiskFlag.INACCESSIBLE_SOURCE not in flags:
+            flags.append(RiskFlag.INACCESSIBLE_SOURCE)
+        updated.risk_flags = list(dict.fromkeys(flags))
+        updated.evidence_needed = list(
+            dict.fromkeys(updated.evidence_needed + ["Relevant source excerpt for the cited claim."])
+        )
         return updated
 
     def _edge_from_claim(

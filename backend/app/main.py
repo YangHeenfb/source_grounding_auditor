@@ -133,7 +133,9 @@ def get_analysis(analysis_id: str) -> AnalysisResult:
 
 @app.get("/")
 def index() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+    response = FileResponse(STATIC_DIR / "index.html")
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 

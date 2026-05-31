@@ -8,6 +8,8 @@ from .schemas import (
     Claim,
     ClaimType,
     ContentMix,
+    DisplayCitationResult,
+    DisplayStatus,
     GroundingBucket,
     GroundingMix,
     KeyRates,
@@ -25,7 +27,12 @@ def _ratio(count: int, denom: int) -> float:
 
 
 class RatioReporter:
-    def build_summary(self, claims: list[Claim]) -> AnalysisSummary:
+    def build_summary(
+        self,
+        claims: list[Claim],
+        *,
+        display_citations: list[DisplayCitationResult] | None = None,
+    ) -> AnalysisSummary:
         total = len(claims)
         auditable = [c for c in claims if c.claim_type != ClaimType.NON_CLAIM]
         non_claim_count = total - len(auditable)
@@ -59,6 +66,10 @@ class RatioReporter:
             no_support=_ratio(relation_counts[SupportRelation.NO_SUPPORT.value], denom),
             contradicts=_ratio(relation_counts[SupportRelation.CONTRADICTS.value], denom),
             inaccessible=_ratio(relation_counts[SupportRelation.INACCESSIBLE.value], denom),
+            audit_limited_no_relevant_snippet=_ratio(
+                relation_counts[SupportRelation.AUDIT_LIMITED_NO_RELEVANT_SNIPPET.value],
+                denom,
+            ),
             not_checked=_ratio(relation_counts[SupportRelation.NOT_CHECKED.value], denom),
         )
 
@@ -82,10 +93,32 @@ class RatioReporter:
             SupportRelation.NO_SUPPORT,
             SupportRelation.CONTRADICTS,
         }
-        citation_mismatch = sum(
+        def has_usable_source_body(claim: Claim) -> bool:
+            return any(
+                edge.source_id
+                and edge.support_relation not in {
+                    SupportRelation.INACCESSIBLE,
+                    SupportRelation.AUDIT_LIMITED_NO_RELEVANT_SNIPPET,
+                }
+                and bool(edge.evidence_quote or edge.evidence_span)
+                for edge in claim.evidence_chain
+            )
+
+        true_mismatch = sum(
             1
             for c in auditable
-            if RiskFlag.SOURCE_CLAIM_MISMATCH in c.risk_flags or (c.support_relation in mismatch_relations)
+            if has_usable_source_body(c)
+            and (RiskFlag.SOURCE_CLAIM_MISMATCH in c.risk_flags or (c.support_relation in mismatch_relations))
+        )
+        audit_limited = sum(
+            1
+            for c in auditable
+            if c.support_relation
+            in {
+                SupportRelation.INACCESSIBLE,
+                SupportRelation.AUDIT_LIMITED_NO_RELEVANT_SNIPPET,
+            }
+            or RiskFlag.INACCESSIBLE_SOURCE in c.risk_flags
         )
         premise_support_for_analysis = sum(
             1
@@ -122,14 +155,27 @@ class RatioReporter:
         )
 
         key_rates = KeyRates(
+            verified_fact_support_rate=grounding_mix.hard_fact_grounding,
+            partial_or_weak_support_rate=grounding_mix.weak_fact_grounding,
+            attribution_support_rate=grounding_mix.attribution_or_opinion_grounding,
+            analysis_from_sourced_premises_rate=_ratio(premise_support_for_analysis, denom),
+            audit_limited_rate=_ratio(audit_limited, denom),
+            true_mismatch_rate=_ratio(true_mismatch, denom),
             public_fact_support_rate=grounding_mix.hard_fact_grounding,
             loose_fact_support_rate=round(grounding_mix.hard_fact_grounding + grounding_mix.weak_fact_grounding, 4),
             opinion_packaging_rate=_ratio(opinion_packaging, denom),
             source_opacity_rate=_ratio(source_opacity, denom),
-            citation_mismatch_rate=_ratio(citation_mismatch, denom),
+            citation_mismatch_rate=_ratio(true_mismatch, denom),
             premise_support_for_analysis_rate=_ratio(premise_support_for_analysis, denom),
             official_fact_support_rate=_ratio(official_fact_support, denom),
         )
+        if display_citations is not None:
+            key_rates = _key_rates_from_display_citations(
+                display_citations,
+                opinion_packaging_rate=_ratio(opinion_packaging, denom),
+                source_opacity_rate=_ratio(source_opacity, denom),
+                official_fact_support_rate=_ratio(official_fact_support, denom),
+            )
 
         return AnalysisSummary(
             total_claims=total,
@@ -140,3 +186,40 @@ class RatioReporter:
             support_relation_mix=support_relation_mix,
             key_rates=key_rates,
         )
+
+
+def _key_rates_from_display_citations(
+    display_citations: list[DisplayCitationResult],
+    *,
+    opinion_packaging_rate: float,
+    source_opacity_rate: float,
+    official_fact_support_rate: float,
+) -> KeyRates:
+    user_visible = [
+        item
+        for item in display_citations
+        if item.display_status != DisplayStatus.EXCLUDED_OR_CONTEXT
+    ]
+    denom = len(user_visible)
+    status_counts = Counter(item.display_status.value for item in user_visible)
+    verified = _ratio(status_counts[DisplayStatus.VERIFIED_FACT_SUPPORT.value], denom)
+    partial = _ratio(status_counts[DisplayStatus.PARTIAL_OR_WEAK_SUPPORT.value], denom)
+    attribution = _ratio(status_counts[DisplayStatus.ATTRIBUTION_SUPPORT.value], denom)
+    analysis = _ratio(status_counts[DisplayStatus.ANALYSIS_FROM_SOURCED_PREMISES.value], denom)
+    audit_limited = _ratio(status_counts[DisplayStatus.AUDIT_LIMITED.value], denom)
+    true_mismatch = _ratio(status_counts[DisplayStatus.TRUE_CITATION_PROBLEM.value], denom)
+    return KeyRates(
+        verified_fact_support_rate=verified,
+        partial_or_weak_support_rate=partial,
+        attribution_support_rate=attribution,
+        analysis_from_sourced_premises_rate=analysis,
+        audit_limited_rate=audit_limited,
+        true_mismatch_rate=true_mismatch,
+        public_fact_support_rate=verified,
+        loose_fact_support_rate=round(verified + partial, 4),
+        opinion_packaging_rate=opinion_packaging_rate,
+        source_opacity_rate=source_opacity_rate,
+        citation_mismatch_rate=true_mismatch,
+        premise_support_for_analysis_rate=analysis,
+        official_fact_support_rate=official_fact_support_rate,
+    )

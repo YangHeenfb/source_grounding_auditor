@@ -128,9 +128,12 @@ Important rules:
 5. If the source is named but the underlying evidence is anonymous, use NAMED_SECONDARY_WITH_OPAQUE_UNDERLYING.
 6. If the text says "someone said", "some discussions say", or "experts say" without a named publisher or named expert, use VAGUE_SOURCE_MENTION.
 7. Distinguish factual claims, attribution claims, and judgment or analysis claims.
-8. Dates, years, footnote numbers, and citation numbers are not material quantitative data. Money, percentage, valuation, revenue, market share, sample size, performance metric, and ranking are material quantitative data.
-9. Preserve original_span exactly as much as possible.
-10. Output only JSON that matches the provided schema."""
+8. A school, company, agency, or product webpage stating facts about its own degrees, programs, reports, admissions, courses, staff, data, or announcements is a factual asserted claim when the author uses it as evidence. Do not classify this as ATTRIBUTION_REPORT merely because the sentence says "the official page says/shows".
+9. ATTRIBUTION_REPORT is for reporting or attributed statements such as "Reuters reported...", "Bloomberg cited sources...", "an expert said...", or "a report argues...".
+10. Dates, years, footnote numbers, and citation numbers are not material quantitative data. Money, percentage, valuation, revenue, market share, sample size, performance metric, and ranking are material quantitative data.
+11. Preserve original_span exactly as much as possible.
+12. Keep normalized_claim in the same language as the input claim. Do not translate Chinese claims into English or English claims into Chinese.
+13. Output only JSON that matches the provided schema."""
 
 
 SUPPORT_CHECK_SYSTEM_PROMPT = """You are checking whether a cited source supports a specific claim. Do not decide whether the world is actually true or false. Only decide whether the provided source text supports the claim at the level stated.
@@ -144,7 +147,9 @@ Rules:
 5. If the claim states causation but the source only supports correlation or sequence, mark SOURCE_ONLY_SUPPORTS_WEAKER_CLAIM and, when appropriate, CORRELATION_PRESENTED_AS_CAUSATION.
 6. If the source is an opinion or analysis source used as factual proof, mark OPINION_USED_AS_FACT.
 7. If the source is not available, use INACCESSIBLE. Do not call the claim high risk only because source text is missing.
-8. Output only JSON that matches the provided schema."""
+8. The source_bundle contains top evidence_snippets selected from the source body. Judge only from those snippets and metadata, not from the full page.
+9. If relevant snippets are not available, use INACCESSIBLE or the audit-limited relation supplied by the caller. Do not infer NO_SUPPORT from missing snippets.
+10. Output only JSON that matches the provided schema."""
 
 
 SUPPORT_CHECK_BATCH_SYSTEM_PROMPT = SUPPORT_CHECK_SYSTEM_PROMPT + """
@@ -172,6 +177,7 @@ Do not classify these as HIGH_RISK:
 4. An example of what cannot be concluded
 5. A source pointer or citation list
 6. A claim where the only issue is that the source body was not available in this run
+7. A claim where the source body existed but no relevant evidence snippet was retrieved
 
 Classify attribution claims separately. Attribution support means the source supports that someone said or reported something. It does not mean the underlying statement has primary fact support.
 

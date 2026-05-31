@@ -80,7 +80,10 @@ def test_analyze_with_provided_source(monkeypatch):
     assert 'problematic_citations' in data
     assert 'audit_limited_citations' in data
     assert 'attribution_supported_citations' in data
+    assert 'display_citations' in data
+    assert 'evidence_graphs' in data
     assert data['summary']['grounding_mix']['hard_fact_grounding'] > 0
+    assert data['summary']['key_rates']['verified_fact_support_rate'] > 0
     assert 'claims' in data
 
 

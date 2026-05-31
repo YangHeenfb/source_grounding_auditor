@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Source Grounding Auditor</title>
+  <title>来源支撑审计器</title>
   <style>
     :root { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #1f2937; background: #f8fafc; }
     body { margin: 0; }
@@ -21,33 +21,56 @@
     .checkline input { width: auto; }
     .muted { color: #64748b; }
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
-    .card { background: white; border: 1px solid #e2e8f0; border-radius: 16px; padding: 16px; box-shadow: 0 1px 2px rgba(15,23,42,0.04); }
+    .card, .claim-card { background: white; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; box-shadow: 0 1px 2px rgba(15,23,42,0.04); }
+    .claim-card { margin-bottom: 16px; }
     .metric { display: flex; justify-content: space-between; margin: 9px 0; gap: 12px; }
     .bar { height: 8px; background: #e2e8f0; border-radius: 99px; overflow: hidden; margin-top: 4px; }
     .bar > span { display: block; height: 100%; background: #111827; }
-    table { width: 100%; border-collapse: collapse; background: white; border-radius: 16px; overflow: hidden; }
-    th, td { padding: 10px; border-bottom: 1px solid #e2e8f0; text-align: left; vertical-align: top; }
-    th { background: #f1f5f9; font-size: 13px; }
     code, .pill { background: #f1f5f9; border-radius: 999px; padding: 3px 8px; display: inline-block; margin: 2px; font-size: 12px; }
-    details { margin-top: 6px; }
+    details { margin-top: 10px; }
+    summary { cursor: pointer; font-weight: 700; }
     .error { color: #b91c1c; font-weight: 700; }
     .small { font-size: 13px; }
+    .status-badge { display: inline-flex; align-items: center; border-radius: 999px; padding: 5px 10px; font-size: 13px; font-weight: 800; margin-bottom: 10px; }
+    .status-ok { background: #dcfce7; color: #166534; }
+    .status-low { background: #e0f2fe; color: #075985; }
+    .status-info { background: #eef2ff; color: #3730a3; }
+    .status-warning { background: #fef3c7; color: #92400e; }
+    .status-problem { background: #fee2e2; color: #991b1b; }
+    .status-muted { background: #f1f5f9; color: #475569; }
+    .claim-text { font-size: 16px; line-height: 1.55; margin: 4px 0 8px; }
+    .explanation { margin: 0 0 14px; color: #475569; }
+    .graph-wrap { overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 10px; background: #f8fafc; padding: 12px; }
+    .graph-row { display: grid; grid-template-columns: repeat(5, minmax(160px, 1fr)); gap: 14px; align-items: stretch; min-width: 860px; }
+    .graph-col { display: flex; flex-direction: column; gap: 8px; }
+    .graph-col-title { color: #64748b; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
+    .graph-node { border: 1px solid #cbd5e1; border-radius: 10px; padding: 10px; background: white; min-height: 72px; }
+    .graph-node strong { display: block; font-size: 13px; line-height: 1.35; }
+    .graph-node span { display: block; margin-top: 4px; color: #64748b; font-size: 12px; line-height: 1.35; }
+    .graph-node.ok { border-color: #86efac; }
+    .graph-node.problem, .graph-node.true_citation_problem { border-color: #fca5a5; }
+    .graph-node.warning, .graph-node.audit_limited { border-color: #fcd34d; }
+    .edge-list { margin: 10px 0 0; color: #64748b; font-size: 12px; display: flex; flex-wrap: wrap; gap: 6px; }
+    .edge-chip { background: white; border: 1px solid #e2e8f0; border-radius: 999px; padding: 4px 8px; }
+    .tech-grid { display: grid; grid-template-columns: minmax(130px, 200px) 1fr; gap: 8px 12px; margin-top: 10px; font-size: 13px; }
+    .tech-grid dt { font-weight: 800; color: #475569; }
+    .tech-grid dd { margin: 0; word-break: break-word; }
   </style>
 </head>
 <body>
   <main>
-    <h1>Source Grounding Auditor</h1>
-    <p class="muted">Citation-only mode：只分析带 citation 的句子或段落。未带 citation 的内容不会进入 claims 或 ratios。</p>
+    <h1>来源支撑审计器</h1>
+    <p class="muted">仅引用模式：只分析带引用标记的句子或段落。未带引用的内容不会进入主张或比例统计。</p>
 
     <section class="card">
       <label for="question"><strong>原始问题，可选</strong></label>
       <input id="question" placeholder="例如：这段 AI 回答是否有可靠事实支撑？" />
       <div style="height:12px"></div>
-      <label for="extractor"><strong>Claim extractor</strong></label>
+      <label for="extractor"><strong>主张抽取器</strong></label>
       <select id="extractor">
-        <option value="codex" selected>Codex CLI / fast structured mode</option>
+        <option value="codex" selected>Codex CLI / 快速结构化模式</option>
         <option value="openai">OpenAI API 抽取</option>
-        <option value="auto">Auto：OpenAI API 或 Codex</option>
+        <option value="auto">自动：OpenAI API 或 Codex</option>
       </select>
       <label class="checkline">
         <input type="checkbox" id="webSearch" checked />
@@ -55,12 +78,12 @@
       </label>
       <div style="height:12px"></div>
       <label for="text"><strong>输入文本</strong></label>
-      <textarea id="text" placeholder="粘贴 AI 回答、网络文章正文或带 citation 的文本"></textarea>
+      <textarea id="text" placeholder="粘贴 AI 回答、网络文章正文或带引用标记的文本"></textarea>
       <div class="row">
-        <button id="analyzeBtn">Analyze</button>
-        <button class="danger" id="cancelBtn" style="display:none">Cancel</button>
+        <button id="analyzeBtn">开始分析</button>
+        <button class="danger" id="cancelBtn" style="display:none">取消</button>
         <button class="secondary" id="sampleBtn">加载示例</button>
-        <span class="muted small">默认抓取显式 URL，并会搜索缺失 URL 的来源说明。仍可在 API 请求里传 provided_sources 做精确测试。</span>
+        <span class="muted small">默认抓取显式 URL，并会搜索缺失 URL 的来源说明。仍可在 API 请求里传预置来源正文做精确测试。</span>
       </div>
       <p id="status" class="muted"></p>
     </section>
@@ -69,109 +92,232 @@
       <h2>比例摘要</h2>
       <div class="grid" id="summaryCards"></div>
 
-      <h2>Problematic citations</h2>
-      <p class="muted small">这些是基于 cited claims 判断出的、作者或模型实际主张的、重要的、且证据关系存在实质问题的 citation。</p>
+      <h2>引用问题</h2>
+      <p class="muted small">这里只包含可用证据明确不支撑或反驳主张的引用；审计受限不会放进这里。</p>
       <div id="problematicCitations" class="card"></div>
 
-      <h2>Attribution-supported citations</h2>
-      <p class="muted small">这些 cited claims 的 source 支持“某来源说过这件事”，但不等于被转述内容本身已经被一手事实证明。</p>
-      <div id="attributionSupportedCitations" class="card"></div>
-
-      <h2>Audit-limited citations</h2>
-      <p class="muted small">这些 citations 不是 problematic，只是本轮没有足够 source body 或网页抓取来完成 source support check。</p>
-      <div id="auditLimitedCitations" class="card"></div>
-
-      <h2>已排除的上下文、示例和限制说明</h2>
-      <p class="muted small">这些内容不是作者实际主张，或者只是 caveat、source pointer、用户问题、章节标题、反例。</p>
-      <div id="excludedContextCitations" class="card"></div>
-
-      <details>
-        <summary>Flagged citations but not problematic</summary>
-        <div id="flaggedCitations" class="card"></div>
-      </details>
-
-      <h2>Claim 明细</h2>
-      <div style="overflow:auto">
-        <table>
-          <thead>
-            <tr>
-              <th>Claim</th><th>类型</th><th>数据</th><th>最终桶</th><th>支撑关系</th><th>风险标签</th><th>证据链</th>
-            </tr>
-          </thead>
-          <tbody id="claimsBody"></tbody>
-        </table>
-      </div>
+      <h2>引用明细与证据图</h2>
+      <p class="muted small">默认只展示用户可读状态。内部诊断标签保留在“查看技术细节”里。</p>
+      <div id="citationCards"></div>
     </section>
   </main>
 <script>
 const pct = (v) => `${Math.round((v || 0) * 100)}%`;
-const escapeHtml = (s) => (s || '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+const escapeHtml = (s) => String(s || '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const API_BASE = window.location.protocol === 'file:' ? 'http://127.0.0.1:8000' : '';
 let currentJobId = null;
 let pollTimer = null;
 function metric(label, value) {
-  return `<div class="metric"><span>${label}</span><strong>${pct(value)}</strong></div><div class="bar"><span style="width:${pct(value)}"></span></div>`;
+  return `<div class="metric"><span>${escapeHtml(label)}</span><strong>${pct(value)}</strong></div><div class="bar"><span style="width:${pct(value)}"></span></div>`;
 }
 function card(title, items) {
-  return `<div class="card"><strong>${title}</strong>${items.map(([k,v]) => metric(k,v)).join('')}</div>`;
+  return `<div class="card"><strong>${escapeHtml(title)}</strong>${items.map(([k,v]) => metric(k,v)).join('')}</div>`;
 }
 function progressText(job) {
   const progress = job.progress || {};
-  const message = progress.message || (job.status === 'cancelling' ? 'Cancelling...' : 'Analyzing...');
+  const message = translateProgressMessage(progress.message || (job.status === 'cancelling' ? '正在取消...' : '正在分析...'));
   if (typeof progress.current === 'number' && typeof progress.total === 'number') {
     return `${message} (${progress.current}/${progress.total})`;
   }
   return message;
 }
-function renderReviewList(id, items, emptyText) {
-  document.getElementById(id).innerHTML = items.length ? items.map(r => `
-    <p><strong>${escapeHtml(r.normalized_claim)}</strong><br>
-    <span class="muted">${escapeHtml(r.explanation)}</span><br>
-    <span class="pill">${escapeHtml(r.discourse_role || '')}</span>
-    <span class="pill">${escapeHtml(r.support_relation || '')}</span>
-    <span class="pill">${escapeHtml(r.final_bucket || '')}</span>
-    ${(r.risk_flags || []).map(f => `<span class="pill">${escapeHtml(f)}</span>`).join('')}</p>
-  `).join('') : `<p class="muted">${emptyText}</p>`;
+function statusClass(item) {
+  return `status-${escapeHtml(item.severity || 'info')}`;
+}
+function renderMiniDisplayList(id, displayItems, claimsById) {
+  document.getElementById(id).innerHTML = displayItems.length ? displayItems.map(item => {
+    const claim = claimsById.get(item.claim_id) || {};
+    return `<p><span class="status-badge ${statusClass(item)}">${escapeHtml(item.display_label)}</span><br>
+      <strong>${escapeHtml(displayClaimText(item, claim))}</strong><br>
+      <span class="muted">${escapeHtml(item.display_explanation)}</span></p>`;
+  }).join('') : '<p class="muted">没有引用问题。</p>';
+}
+function displayClaimText(item, claim) {
+  return item?.display_claim_text || claim?.original_span || claim?.original_text_span || claim?.normalized_claim || item?.claim_id || '';
+}
+function translateBasis(value) {
+  const map = {
+    'based only on cited claims': '仅基于带引用的主张',
+    'based on all extracted claims': '基于全部抽取出的主张'
+  };
+  return map[value] || value || '';
+}
+function translateProgressMessage(value) {
+  if (!value) return '';
+  const exact = {
+    'Parsing citations and citation-only chunks.': '正在解析引用和带引用片段。',
+    'Extracting cited atomic claims.': '正在抽取带引用的原子主张。',
+    'Resolved cited sources.': '已解析引用来源。',
+    'Classifying review categories.': '正在分类审计结果。',
+    'Classified review categories.': '已完成审计分类。',
+    'Building audit summary.': '正在生成审计摘要。',
+    'Analysis completed.': '分析完成。',
+    'Analysis was cancelled.': '分析已取消。',
+    'Waiting to start.': '等待开始。'
+  };
+  if (exact[value]) return exact[value];
+  return value
+    .replace('Extracted ', '已抽取 ')
+    .replace(' cited claims.', ' 条带引用主张。')
+    .replace('Resolving sources for claim ', '正在解析第 ')
+    .replace(' of ', ' / ')
+    .replace('Resolving cited sources.', '正在解析引用来源。')
+    .replace('Checking support for ', '正在检查 ')
+    .replace(' claim-source pairs.', ' 组主张-来源关系。')
+    .replace('Checked support for ', '已检查 ')
+    .replace('Extracting cited atomic claims, citation unit ', '正在抽取带引用原子主张，引用片段 ')
+    .replace('Extracting cited atomic claims, chunk ', '正在抽取带引用原子主张，片段 ');
+}
+function localizeGraphText(value) {
+  const map = {
+    'Claim': '主张',
+    'Citation': '引用',
+    'Source': '来源',
+    'Evidence': '证据',
+    'Evidence snippet': '证据片段',
+    'Upstream source': '上游来源',
+    'Upstream / Missing': '上游或缺失证据',
+    'cites': '引用',
+    'points to': '指向来源',
+    'supports': '支撑',
+    'checked': '已检查',
+    'missing evidence': '缺少证据',
+    'upstream': '上游来源',
+    'opaque': '不透明来源'
+  };
+  return map[value] || value || '';
+}
+function localizeRelation(value) {
+  const map = {
+    author_cited: '作者引用',
+    discovered_source: '搜索发现来源',
+    upstream_source: '上游来源',
+    directly_supports: '直接支撑',
+    partially_supports: '部分支撑',
+    supports_weaker_claim: '支撑较弱说法',
+    attribution_only: '归属支撑',
+    opinion_only: '观点支撑',
+    background_only: '背景支撑',
+    no_support: '不支撑',
+    contradicts: '反驳',
+    inaccessible: '来源不可访问',
+    audit_limited_no_relevant_snippet: '未召回相关证据',
+    not_checked: '未检查',
+    missing_evidence: '缺少证据',
+    opaque_source: '不透明来源'
+  };
+  return map[value] || localizeGraphText(value);
+}
+function edgeLabel(edge) {
+  const label = localizeGraphText(edge.label || edge.relation);
+  const relation = localizeRelation(edge.relation);
+  return relation && relation !== label ? `${label} · ${relation}` : label;
 }
 function render(result) {
   document.getElementById('results').style.display = 'block';
   const s = result.summary;
+  const rates = s.key_rates || {};
   const ratiosBasis = s.ratios_basis || result.metadata?.ratios_basis || 'based only on cited claims';
   document.getElementById('summaryCards').innerHTML = [
-    `<div class="card"><strong>Ratios basis</strong><p class="muted">${escapeHtml(ratiosBasis)}</p><p class="small">uncited_claim_analysis_enabled: ${result.uncited_claim_analysis_enabled ? 'true' : 'false'}</p></div>`,
+    `<div class="card"><strong>比例统计范围</strong><p class="muted">${escapeHtml(translateBasis(ratiosBasis))}</p><p class="small">未引用主张分析：${result.uncited_claim_analysis_enabled ? '开启' : '关闭'}</p></div>`,
+    card('用户端状态', [
+      ['事实支撑成立', rates.verified_fact_support_rate ?? rates.public_fact_support_rate],
+      ['部分或弱支撑', rates.partial_or_weak_support_rate],
+      ['归属支撑', rates.attribution_support_rate],
+      ['分析判断', rates.analysis_from_sourced_premises_rate ?? rates.premise_support_for_analysis_rate],
+      ['审计受限', rates.audit_limited_rate],
+      ['引用错配', rates.true_mismatch_rate ?? rates.citation_mismatch_rate]
+    ]),
     card('内容构成', [
-      ['事实陈述', s.content_mix.factual], ['归属陈述', s.content_mix.attribution], ['判断陈述', s.content_mix.judgment], ['含数据 claim', s.content_mix.has_quantitative_data]
-    ]),
-    card('来源链终点', [
-      ['硬事实支撑', s.grounding_mix.hard_fact_grounding], ['弱事实支撑', s.grounding_mix.weak_fact_grounding], ['归属或观点支撑', s.grounding_mix.attribution_or_opinion_grounding], ['不可验证或错配', s.grounding_mix.unverifiable_or_mismatch]
-    ]),
-    card('核心指标', [
-      ['公开事实支撑率', s.key_rates.public_fact_support_rate],
-      ['官方事实支撑率', s.key_rates.official_fact_support_rate],
-      ['分析前提支撑率', s.key_rates.premise_support_for_analysis_rate],
-      ['宽松事实支撑率', s.key_rates.loose_fact_support_rate],
-      ['观点包装率', s.key_rates.opinion_packaging_rate],
-      ['来源不透明率', s.key_rates.source_opacity_rate],
-      ['真正引用错配率', s.key_rates.citation_mismatch_rate]
+      ['事实陈述', s.content_mix.factual],
+      ['归属陈述', s.content_mix.attribution],
+      ['判断陈述', s.content_mix.judgment],
+      ['含数据主张', s.content_mix.has_quantitative_data]
     ])
   ].join('');
-  renderReviewList('problematicCitations', result.problematic_citations || result.high_risk_claims || [], '没有 problematic citations。');
-  renderReviewList('attributionSupportedCitations', result.attribution_supported_citations || result.attribution_supported_claims || [], '没有 attribution-supported citations。');
-  renderReviewList('auditLimitedCitations', result.audit_limited_citations || result.audit_limited_claims || [], '没有 audit-limited citations。');
-  renderReviewList('excludedContextCitations', result.excluded_or_context_citations || result.excluded_or_context_claims || [], '没有已排除的上下文、示例或限制说明。');
-  renderReviewList('flaggedCitations', result.flagged_citations || result.flagged_claims || [], '没有 flagged but not problematic citations。');
 
-  document.getElementById('claimsBody').innerHTML = (result.claims || []).map(c => {
-    const chain = (c.evidence_chain || []).map(e => `<details><summary>${escapeHtml(e.support_relation)} via ${escapeHtml(e.basis)}</summary><p>${escapeHtml(e.reasoning_summary)}</p><p><span class="pill">${escapeHtml(e.source_role_for_claim || '')}</span><span class="pill">${escapeHtml(e.support_scope || '')}</span></p><p class="muted">${escapeHtml(e.evidence_span)}</p></details>`).join('');
-    return `<tr><td>${escapeHtml(c.normalized_claim)}</td><td>${c.claim_type}</td><td>${c.has_quantitative_data ? 'yes' : 'no'}</td><td>${escapeHtml(c.final_bucket || '')}</td><td>${escapeHtml(c.support_relation || '')}</td><td>${(c.risk_flags || []).map(f => `<span class="pill">${f}</span>`).join('')}</td><td>${chain}</td></tr>`;
-  }).join('');
+  const claimsById = new Map((result.claims || []).map(c => [c.claim_id, c]));
+  const graphsByClaimId = new Map((result.evidence_graphs || []).map(g => [g.claim_id, g]));
+  const displayItems = result.display_citations || [];
+  renderMiniDisplayList(
+    'problematicCitations',
+    displayItems.filter(item => item.display_status === 'true_citation_problem' || item.should_show_in_problematic),
+    claimsById
+  );
+  document.getElementById('citationCards').innerHTML = displayItems.length
+    ? displayItems.map(item => renderClaimCard(item, claimsById.get(item.claim_id), graphsByClaimId.get(item.claim_id))).join('')
+    : '<div class="card"><p class="muted">没有带引用的主张。</p></div>';
+}
+function renderClaimCard(item, claim, graph) {
+  const graphHtml = graph ? renderGraph(graph) : '<p class="muted">没有生成证据图。</p>';
+  return `<article class="claim-card">
+    <span class="status-badge ${statusClass(item)}">${escapeHtml(item.display_label)}</span>
+    <p class="claim-text">${escapeHtml(displayClaimText(item, claim))}</p>
+    <p class="explanation">${escapeHtml(item.display_explanation)}</p>
+    <div class="graph-wrap">${graphHtml}</div>
+    ${renderTechnicalDetails(item, claim)}
+  </article>`;
+}
+function renderGraph(graph) {
+  const columns = [
+    ['claim', '主张'],
+    ['citation', '引用'],
+    ['source', '来源'],
+    ['evidence', '证据片段'],
+    ['upstream', '上游或缺失证据']
+  ];
+  const columnForNode = (node) => {
+    if (node.type === 'missing_evidence' || node.type === 'opaque_source' || node.type === 'upstream_source') return 'upstream';
+    return node.type;
+  };
+  const nodesByColumn = new Map(columns.map(([key]) => [key, []]));
+  (graph.nodes || []).forEach(node => {
+    const key = columnForNode(node);
+    if (!nodesByColumn.has(key)) nodesByColumn.set(key, []);
+    nodesByColumn.get(key).push(node);
+  });
+  const rows = columns.map(([key, title]) => `
+    <div class="graph-col">
+      <div class="graph-col-title">${escapeHtml(title)}</div>
+      ${(nodesByColumn.get(key) || []).map(renderGraphNode).join('') || '<div class="muted small">-</div>'}
+    </div>
+  `).join('');
+  const edges = (graph.edges || []).map(edge => `<span class="edge-chip">${escapeHtml(edgeLabel(edge))}</span>`).join('');
+  return `<div class="graph-row">${rows}</div>${edges ? `<div class="edge-list">${edges}</div>` : ''}`;
+}
+function renderGraphNode(node) {
+  return `<div class="graph-node ${escapeHtml(node.status || '')}">
+    <strong>${escapeHtml(localizeGraphText(node.label) || node.label)}</strong>
+    <span>${escapeHtml(localizeGraphText(node.subtitle || node.type))}</span>
+  </div>`;
+}
+function renderTechnicalDetails(item, claim) {
+  const chain = (claim?.evidence_chain || []).map((edge, index) => `
+    <dt>证据边 ${index + 1}</dt>
+    <dd>${escapeHtml(edge.support_relation || '')} · ${escapeHtml(edge.final_bucket || '')} · ${escapeHtml(edge.support_scope || '')}<br>${escapeHtml(edge.reasoning_summary || '')}</dd>
+  `).join('');
+  return `<details class="tech-details">
+    <summary>查看技术细节</summary>
+    <dl class="tech-grid">
+      <dt>主张类型</dt><dd>${escapeHtml(claim?.claim_type || '')}</dd>
+      <dt>话语角色</dt><dd>${escapeHtml(claim?.discourse_role || '')}</dd>
+      <dt>支撑关系</dt><dd>${escapeHtml(claim?.support_relation || '')}</dd>
+      <dt>最终桶</dt><dd>${escapeHtml(claim?.final_bucket || '')}</dd>
+      <dt>来源角色</dt><dd>${escapeHtml(claim?.source_role_for_claim || '')}</dd>
+      <dt>支撑范围</dt><dd>${escapeHtml(claim?.support_scope || '')}</dd>
+      <dt>规范化主张</dt><dd>${escapeHtml(claim?.normalized_claim || '')}</dd>
+      <dt>风险诊断</dt><dd>${(claim?.risk_flags || []).map(flag => `<span class="pill">${escapeHtml(flag)}</span>`).join('') || '-'}</dd>
+      <dt>调试标签</dt><dd>${(item.debug_tags || []).map(tag => `<span class="pill">${escapeHtml(tag)}</span>`).join('') || '-'}</dd>
+      ${chain}
+    </dl>
+  </details>`;
 }
 async function analyze() {
   const status = document.getElementById('status');
   const analyzeBtn = document.getElementById('analyzeBtn');
   const cancelBtn = document.getElementById('cancelBtn');
   if (currentJobId) return;
-  status.textContent = 'Analyzing...';
+  status.textContent = '正在分析...';
   status.className = 'muted';
   analyzeBtn.disabled = true;
   cancelBtn.style.display = 'inline-block';
@@ -199,7 +345,7 @@ async function analyze() {
     }
     const job = await res.json();
     currentJobId = job.job_id;
-    status.textContent = `${progressText(job)} job ${currentJobId.slice(0, 8)}`;
+    status.textContent = `${progressText(job)} 任务 ${currentJobId.slice(0, 8)}`;
     pollTimer = window.setInterval(pollJob, 1200);
     await pollJob();
   } catch (err) {
@@ -218,24 +364,24 @@ async function pollJob() {
     if (job.status === 'completed') {
       resetJobControls();
       const data = job.result;
-      status.textContent = `Done. Claims: ${data.summary.total_claims}, auditable: ${data.summary.auditable_claims}.`;
+      status.textContent = `完成。主张：${data.summary.total_claims}，可审计：${data.summary.auditable_claims}。`;
       status.className = 'muted';
       render(data);
       return;
     }
     if (job.status === 'failed') {
       resetJobControls();
-      status.textContent = progressText(job) || job.error || 'Analysis failed.';
+      status.textContent = progressText(job) || job.error || '分析失败。';
       status.className = 'error';
       return;
     }
     if (job.status === 'cancelled') {
       resetJobControls();
-      status.textContent = 'Cancelled.';
+      status.textContent = '已取消。';
       status.className = 'muted';
       return;
     }
-    status.textContent = `${progressText(job)} job ${currentJobId.slice(0, 8)}`;
+    status.textContent = `${progressText(job)} 任务 ${currentJobId.slice(0, 8)}`;
   } catch (err) {
     resetJobControls();
     status.textContent = String(err);
@@ -245,7 +391,7 @@ async function pollJob() {
 async function cancelAnalyze() {
   if (!currentJobId) return;
   const status = document.getElementById('status');
-  status.textContent = 'Cancelling...';
+  status.textContent = '正在取消...';
   try {
     await fetch(`${API_BASE}/analyze/jobs/${currentJobId}/cancel`, { method: 'POST' });
   } catch (err) {
@@ -263,7 +409,7 @@ function resetJobControls() {
 document.getElementById('analyzeBtn').addEventListener('click', analyze);
 document.getElementById('cancelBtn').addEventListener('click', cancelAnalyze);
 document.getElementById('sampleBtn').addEventListener('click', () => {
-  document.getElementById('text').value = `Experts say this policy will damage the middle class.\n\nReuters reported that Nvidia contacted Cerebras about a potential acquisition [1].\n\n[1] Reuters 2026 report on Nvidia and Cerebras`;
+  document.getElementById('text').value = `Reuters reported that Nvidia contacted Cerebras about a potential acquisition [1].\n\nDKU 本科完成后会拿到 DKU 的中国学位和 Duke University 的学位，并成为两校校友。[2]\n\n来源指针\n[1] Reuters 2026 report on Nvidia and Cerebras\n[2]: https://www.dukekunshan.edu.cn/about/the-liberal-arts-in-the-21st-century/ "Undergraduate Curriculum - DKU"`;
 });
 </script>
 </body>

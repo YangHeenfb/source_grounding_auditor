@@ -17,12 +17,13 @@
   - 内容构成比例
   - 来源链终点比例
   - 支撑关系比例
-  - 公开事实支撑率
-  - 宽松事实支撑率
-  - 观点包装率
-  - 来源不透明率
+  - 事实支撑成立率
+  - 部分或弱支撑率
+  - 归属支撑率
+  - 分析判断前提支撑率
+  - 审计受限率
   - 引用错配率
-- 提供高风险 claim 列表。
+- 提供 problematic citation 列表。
 - 提供简单 Web UI。
 
 ## LLM-first structured classification
@@ -34,6 +35,14 @@
 `audit_limited_citations` 只表示本轮无法完成 source support check，不表示 claim 错误。`attribution_supported_citations` 表示 source 支持“某来源说过这件事”，不表示被转述内容本身已被一手事实证明。
 
 所有比例默认都基于 cited claims，响应中的 `summary.ratios_basis` 会写明 `based only on cited claims`。预留字段 `uncited_claim_analysis_enabled` 当前默认为 `false`。
+
+## Display layer
+
+内部诊断标签不是用户端展示标签。`claim_type`、`discourse_role`、`support_relation`、`final_bucket`、`risk_flags` 等字段仍然保留用于 debug、测试和后续分析，但默认 UI 不直接把它们作为结果标签展示。
+
+用户端状态由 `DisplayStatusMapper` 从结构化 claim、support 和 review 结果派生，当前包括：事实支撑成立、部分或弱支撑、归属支撑、分析判断、审计受限、引用问题、已排除。`audit_limited` 不计入引用错配，`true_mismatch_rate` 只统计可用证据明确不支撑或反驳 claim 的 citation。
+
+系统会为每条 cited claim 生成 evidence graph，结构为 `claim -> citation -> source -> evidence`，并在缺少 source body 或相关证据片段时显示 missing evidence 节点。证据图用于展示审计链路，内部枚举和 risk flags 放在“查看技术细节”中。
 
 ## 重要限制
 

@@ -38,6 +38,12 @@
 
 内部 claim 分类和 support relation 只用于后端，不是用户主界面。
 
+## Demo screenshot
+
+下面是一段完整财经分析文本的展示结果：既有落到财报数据的事实终点，也有停在投资评论的观点终点，并保留少量无法审计和引用错配 warning。
+
+![Citation terminal audit finance demo](docs/assets/citation-terminal-finance-paragraph-demo.png)
+
 ## LLM-first structured classification
 
 本项目使用 LLM first structured classification。启发式规则只用于 citation parsing、schema validation、fallback 和测试，不用于核心语义判断。

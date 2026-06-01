@@ -22,6 +22,7 @@ from app.schemas import (
     SupportRelation,
     SupportScope,
     TerminalClass,
+    UnresolvedReason,
 )
 
 
@@ -115,7 +116,7 @@ def test_blog_opinion_without_citation_terminal_opinion():
     )
 
     assert result.terminal_class == TerminalClass.OPINION
-    assert result.terminal_reason == "analysis_from_fact_premises"
+    assert result.terminal_reason == "opinion_with_fact_premise"
 
 
 def test_blog_opinion_with_official_upstream_terminal_fact():
@@ -131,9 +132,9 @@ def test_blog_opinion_with_official_upstream_terminal_fact():
     }
     result = terminal(claim, DisplayStatus.ANALYSIS_FROM_SOURCED_PREMISES, sources)
 
-    assert result.terminal_class == TerminalClass.FACT
-    assert result.terminal_reason == "opinion_source_grounded_in_fact_upstream"
-    assert result.depth == 1
+    assert result.terminal_class == TerminalClass.OPINION
+    assert result.terminal_reason == "opinion_with_fact_premise"
+    assert result.depth == 0
 
 
 def test_source_body_missing_terminal_unresolved():
@@ -149,6 +150,34 @@ def test_source_body_missing_terminal_unresolved():
 
     assert result.terminal_class == TerminalClass.UNRESOLVED
     assert result.terminal_reason == "source_body_missing"
+    assert result.unresolved_reason == UnresolvedReason.SOURCE_BODY_MISSING
+
+
+def test_missing_source_url_terminal_unresolved_reason_no_source_url():
+    claim = make_claim(
+        relation=SupportRelation.INACCESSIBLE,
+        bucket=FinalGroundingBucket.UNVERIFIABLE_OR_MISMATCH,
+    )
+    claim.citation_source_url = None
+
+    result = terminal(claim, DisplayStatus.AUDIT_LIMITED, {})
+
+    assert result.terminal_class == TerminalClass.UNRESOLVED
+    assert result.terminal_reason == "no_source_url"
+    assert result.unresolved_reason == UnresolvedReason.NO_SOURCE_URL
+
+
+def test_no_relevant_snippet_terminal_unresolved_reason_no_relevant_snippet():
+    claim = make_claim(
+        relation=SupportRelation.AUDIT_LIMITED_NO_RELEVANT_SNIPPET,
+        bucket=FinalGroundingBucket.UNVERIFIABLE_OR_MISMATCH,
+    )
+
+    result = terminal(claim, DisplayStatus.AUDIT_LIMITED, {"s001": source()})
+
+    assert result.terminal_class == TerminalClass.UNRESOLVED
+    assert result.terminal_reason == "no_relevant_snippet"
+    assert result.unresolved_reason == UnresolvedReason.NO_RELEVANT_SNIPPET
 
 
 def test_accessible_source_no_support_terminal_mismatch():

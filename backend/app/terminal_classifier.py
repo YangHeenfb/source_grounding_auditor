@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import re
 
 from .display_status_mapper import display_claim_text_for_claim
 from .schemas import (
@@ -19,6 +20,7 @@ from .schemas import (
     SupportRelation,
     SupportScope,
     TerminalClass,
+    UnresolvedReason,
 )
 
 
@@ -92,7 +94,7 @@ def classify_claim_terminal(
         }
     ]
 
-    terminal_class, reason, depth = _terminal_class_for_claim(
+    terminal_class, reason, depth, unresolved_reason = _terminal_class_for_claim(
         claim,
         display_status,
         primary_source,
@@ -125,6 +127,7 @@ def classify_claim_terminal(
         source_url=source_url,
         terminal_class=terminal_class,
         terminal_reason=reason,
+        unresolved_reason=unresolved_reason,
         path_nodes=path_nodes,
         path_edges=path_edges,
         depth=depth,
@@ -163,17 +166,27 @@ def _terminal_class_for_claim(
     path_edges: list[dict],
     *,
     max_terminal_trace_depth: int,
-) -> tuple[TerminalClass, str, int]:
+) -> tuple[TerminalClass, str, int, UnresolvedReason | None]:
+    if _is_cited_span_parse_error(display_claim_text_for_claim(claim)):
+        return (
+            TerminalClass.UNRESOLVED,
+            UnresolvedReason.CITED_SPAN_PARSE_ERROR.value,
+            0,
+            UnresolvedReason.CITED_SPAN_PARSE_ERROR,
+        )
     if display_status == DisplayStatus.TRUE_CITATION_PROBLEM:
-        return TerminalClass.MISMATCH, "source_citation_mismatch", 0
+        return TerminalClass.MISMATCH, "source_citation_mismatch", 0, None
     if display_status == DisplayStatus.AUDIT_LIMITED:
-        return TerminalClass.UNRESOLVED, _unresolved_reason(source), 0
+        reason = _unresolved_reason(claim, source)
+        return TerminalClass.UNRESOLVED, reason.value, 0, reason
     if display_status == DisplayStatus.VERIFIED_FACT_SUPPORT:
-        return TerminalClass.FACT, "verified_fact_support", 0
+        return TerminalClass.FACT, "verified_fact_support", 0, None
     if display_status == DisplayStatus.PARTIAL_OR_WEAK_SUPPORT:
+        if _is_opinion_or_analysis_claim(claim):
+            return TerminalClass.OPINION, "opinion_with_fact_premise", 0, None
         if _claim_has_fact_source_support(claim, source):
-            return TerminalClass.FACT, "fact_source_partial_support", 0
-        return _trace_opinion_or_return_opinion(
+            return TerminalClass.FACT, "fact_source_partial_support", 0, None
+        terminal, reason, depth = _trace_opinion_or_return_opinion(
             source,
             sources_by_id,
             path_nodes,
@@ -181,9 +194,10 @@ def _terminal_class_for_claim(
             reason_without_upstream="weak_or_partial_opinion_support",
             max_terminal_trace_depth=max_terminal_trace_depth,
         )
+        return terminal, reason, depth, None
     if display_status == DisplayStatus.ATTRIBUTION_SUPPORT:
         if _attribution_lands_on_opinion(claim, source):
-            return _trace_opinion_or_return_opinion(
+            terminal, reason, depth = _trace_opinion_or_return_opinion(
                 source,
                 sources_by_id,
                 path_nodes,
@@ -191,17 +205,38 @@ def _terminal_class_for_claim(
                 reason_without_upstream="opinion_attribution",
                 max_terminal_trace_depth=max_terminal_trace_depth,
             )
-        return TerminalClass.FACT, "fact_about_attribution", 0
+            return terminal, reason, depth, None
+        return TerminalClass.FACT, "fact_about_attribution", 0, None
     if display_status == DisplayStatus.ANALYSIS_FROM_SOURCED_PREMISES:
-        return _trace_opinion_or_return_opinion(
-            source,
-            sources_by_id,
-            path_nodes,
-            path_edges,
-            reason_without_upstream="analysis_from_fact_premises",
-            max_terminal_trace_depth=max_terminal_trace_depth,
+        return TerminalClass.OPINION, "opinion_with_fact_premise", 0, None
+    if claim.support_relation == SupportRelation.AUDIT_LIMITED_NO_RELEVANT_SNIPPET:
+        return (
+            TerminalClass.UNRESOLVED,
+            UnresolvedReason.NO_RELEVANT_SNIPPET.value,
+            0,
+            UnresolvedReason.NO_RELEVANT_SNIPPET,
         )
-    return TerminalClass.UNRESOLVED, "terminal_class_not_available", 0
+    if claim.support_relation == SupportRelation.INACCESSIBLE:
+        reason = _unresolved_reason(claim, source)
+        return TerminalClass.UNRESOLVED, reason.value, 0, reason
+    if claim.support_relation in {
+        SupportRelation.PARTIALLY_SUPPORTS,
+        SupportRelation.SUPPORTS_WEAKER_CLAIM,
+        SupportRelation.BACKGROUND_ONLY,
+        SupportRelation.OPINION_ONLY,
+    }:
+        return TerminalClass.OPINION, "opinion_with_fact_premise", 0, None
+    if claim.support_relation == SupportRelation.DIRECTLY_SUPPORTS:
+        if _is_opinion_or_analysis_claim(claim):
+            return TerminalClass.OPINION, "opinion_with_fact_premise", 0, None
+        if _claim_has_fact_source_support(claim, source):
+            return TerminalClass.FACT, "verified_fact_support", 0, None
+    return (
+        TerminalClass.UNRESOLVED,
+        UnresolvedReason.TERMINAL_MAPPING_MISSING.value,
+        0,
+        UnresolvedReason.TERMINAL_MAPPING_MISSING,
+    )
 
 
 def _trace_opinion_or_return_opinion(
@@ -313,14 +348,60 @@ def _attribution_lands_on_opinion(claim: Claim, source: Source | None) -> bool:
     return claim.support_scope == SupportScope.PREMISE_SUPPORT_FOR_ANALYSIS
 
 
-def _unresolved_reason(source: Source | None) -> str:
+def _unresolved_reason(claim: Claim, source: Source | None) -> UnresolvedReason:
+    if _is_cited_span_parse_error(display_claim_text_for_claim(claim)):
+        return UnresolvedReason.CITED_SPAN_PARSE_ERROR
+    if claim.support_relation == SupportRelation.AUDIT_LIMITED_NO_RELEVANT_SNIPPET:
+        return UnresolvedReason.NO_RELEVANT_SNIPPET
     if source is None:
-        return "citation_source_missing"
+        if not claim.citation_source_url:
+            return UnresolvedReason.NO_SOURCE_URL
+        return UnresolvedReason.SOURCE_FETCH_FAILED
     if source.access_status != AccessStatus.ACCESSIBLE:
-        return "source_fetch_failed"
+        return UnresolvedReason.SOURCE_FETCH_FAILED
     if not source.extracted_text:
-        return "source_body_missing"
-    return "audit_limited_no_relevant_snippet"
+        return UnresolvedReason.SOURCE_BODY_MISSING
+    return UnresolvedReason.NO_RELEVANT_SNIPPET
+
+
+def _is_cited_span_parse_error(text: str) -> bool:
+    cleaned = re.sub(r"\s+", "", text or "")
+    if not cleaned:
+        return True
+    return bool(re.fullmatch(r"[*_`~]+", cleaned))
+
+
+def _is_opinion_or_analysis_claim(claim: Claim) -> bool:
+    if claim.claim_type == ClaimType.JUDGMENT:
+        return True
+    if claim.support_scope == SupportScope.PREMISE_SUPPORT_FOR_ANALYSIS:
+        return True
+    if any(edge.support_scope == SupportScope.PREMISE_SUPPORT_FOR_ANALYSIS for edge in claim.evidence_chain):
+        return True
+    text = display_claim_text_for_claim(claim).lower()
+    return any(
+        term in text
+        for term in [
+            "更适合",
+            "更强",
+            "硬实力",
+            "影响",
+            "会让",
+            "以为",
+            "值得",
+            "说明",
+            "意味着",
+            "建议",
+            "风险",
+            "长期持有",
+            "opinion",
+            "analysis",
+            "suggest",
+            "should",
+            "risk",
+            "impact",
+        ]
+    )
 
 
 def _citation_path_node(claim: Claim) -> dict:

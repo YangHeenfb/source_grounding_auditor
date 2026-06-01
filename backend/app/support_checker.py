@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-from .evidence_snippet_retriever import retrieve_evidence_snippets
+from .evidence_snippet_retriever import retrieve_evidence_snippets_with_reason
 from .providers.llm_provider import LLMProvider, LLMProviderError, LLMProviderTimeoutError
 from .providers.llm_provider import CancellationToken
 from .schemas import (
@@ -108,10 +108,14 @@ class SupportChecker:
                 raise RuntimeError("SupportChecker requires an LLMProvider when source body is available.")
             source_bundle = self._source_bundle(item.source, item.claim)
             if source_bundle.get("snippet_retrieval_status") == "no_relevant_snippet":
+                failure_reason = source_bundle.get("snippet_failure_reason") or "no_relevant_snippet"
                 updated = self._mark_no_relevant_snippet(
                     item.claim,
                     source_id=source_bundle.get("source_id"),
-                    reasoning="Source body was available, but no relevant evidence snippet was retrieved for this cited text.",
+                    reasoning=(
+                        "Source body was available, but no relevant evidence snippet was retrieved "
+                        f"for this cited text. Snippet failure reason: {failure_reason}."
+                    ),
                 )
                 results[index] = (
                     self._edge_from_claim(updated, item.source, edge_type=item.edge_type, basis=item.basis),
@@ -219,10 +223,11 @@ class SupportChecker:
         if source is None:
             return {}
         source_text = source.extracted_text or ""
-        snippets = retrieve_evidence_snippets(
+        retrieval = retrieve_evidence_snippets_with_reason(
             " ".join(part for part in [claim.original_text_span, claim.normalized_claim] if part),
             source_text,
         )
+        snippets = retrieval.snippets
         snippet_text = "\n".join(snippet.text for snippet in snippets)
         return {
             "source_id": source.source_id,
@@ -243,6 +248,7 @@ class SupportChecker:
                 for snippet in snippets
             ],
             "snippet_retrieval_status": "ok" if snippets else "no_relevant_snippet",
+            "snippet_failure_reason": retrieval.failure_reason,
             "extracted_text": snippet_text[:MAX_SOURCE_TEXT_CHARS],
             "extracted_text_preview": source.extracted_text_preview,
         }

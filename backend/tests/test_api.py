@@ -176,6 +176,7 @@ def test_background_analyze_job_can_be_cancelled(monkeypatch):
             "input_text": "Reuters reported that Nvidia contacted Cerebras [1].\n\n[1] Reuters report",
             "enable_url_fetch": False,
             "enable_web_search": False,
+            "split_atomic_claims": True,
         },
     )
     job_id = response.json()["job_id"]

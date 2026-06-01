@@ -1,84 +1,263 @@
 # Source Grounding Auditor
 
-这个项目第一版是 citation terminal audit：给定带 citation 的文章或 AI 回答，统计已标注 citation 最终落到事实、观点还是无法审计。它不判断观点真假，不评价整篇文章可信度，也不输出单一可信度分数。
+**看一段带 citation 的内容，最终有多少落到事实，有多少停在观点。**
 
-## About
+Source Grounding Auditor 是一个 citation terminal audit 工具。它不判断一篇文章或一段 AI 回答到底“对不对”，也不输出单一可信度分数。它只做一件更具体的事：
 
-Source Grounding Auditor 是一个引用最终落点审计工具。它面向带 citation 的文章、研究笔记和 AI 回答，把“引用是否可靠”拆成一个更具体的问题：这条 citation 最终是落到事实来源、停在观点来源、无法审计，还是和被引用陈述不对应。
+**把文本里的 citation 一层层往下追，看看它最终落到良好定义的事实来源，还是停在观点、评论、帖子、博主判断，或者根本无法审计。**
 
-项目第一版采用 citation-only mode，只分析已经标注 citation 的内容，不把未引用段落混进统计。后端保留 claim extraction、support relation、risk flags 等结构化诊断字段，但默认产品界面只展示用户真正需要的四类结果：事实终点、观点终点、无法审计和引用错配 warning。
+## 为什么做这个项目
 
-它不判断观点本身对错，也不试图给整篇文章打一个可信度分数。它的目标是让用户快速看清一篇文章或 AI 回答的引用链最终落在哪里。
+现在大量 AI 生成回答、网络文章、研究笔记、YouTube 视频脚本和网页内容都会标注 citation。citation 会给人一种很强的安全感：一个论断只要旁边有来源，就好像已经被事实支持了。
+
+但现实不是这样。
+
+有些 citation 的确指向良好定义的事实，比如官方公告、原始数据、论文、财报、法律文本、公司页面、报告中的具体数据或访谈原文。
+
+也有很多 citation 只是指向别人的观点，比如一篇博客、一条推文、一个论坛帖子、一篇评论文章、一个专家判断或一个投资分析。它们可能有价值，但它们不是事实本身。
+
+更麻烦的是，观点也可以继续引用别的来源。一个博主的观点可能引用了官方数据，也可能引用了另一个博主的观点。Source Grounding Auditor 想回答的就是这个问题：
+
+**这条 citation 继续往下追，最后到底落到了事实，还是仍然只是观点？**
+
+## 这个项目不做什么
+
+本项目不判断观点是否正确。
+
+本项目不判断整篇文章是真还是假。
+
+本项目不把“无法审计”当成“错误”。
+
+本项目不输出“可信度 82 分”这类单一分数。
+
+本项目不把搜索到的相似网页自动当成真实上游来源。
+
+它的目标是给用户一个直观的证据结构视图：
+
+**这段内容里，多少 citation 最终落到事实，多少 citation 最终停在观点，多少 citation 目前无法审计。**
+
+## 核心概念
+
+### Citation 不是证据，citation 只是入口
+
+一条 citation 只能说明“作者给了一个来源”。它还不能说明这个来源真的支持原文，也不能说明这个来源本身是事实来源。
+
+Source Grounding Auditor 把 citation 看成入口，然后继续追踪：
+
+```text
+原文中的 cited statement
+→ citation
+→ 直接来源
+→ 来源中的证据片段
+→ 来源自己引用的上游来源
+→ 最终落点
+```
+
+最终落点只分成少数几类，方便用户一眼看懂。
+
+### FACT：事实终点
+
+citation 最终落到良好定义的事实来源。
+
+例子包括官方页面、原始数据、法律法规、公司公告、财报、学术论文、报告中的具体数据、访谈原文、演讲 transcript、产品文档、基金官网和学校官网等。
+
+这里的 FACT 不等于“宇宙真理”。它的意思是：
+
+**这条 citation 最终落到了一个可以公开核验的事实性来源。**
+
+### OPINION：观点终点
+
+citation 最终停在观点、评论、博客、媒体分析、专家判断、投资建议、社交媒体帖子或价值判断，而且继续追溯后没有落到事实来源。
+
+这不代表观点一定错。它只代表：
+
+**这条 citation 最终没有落到良好定义的事实来源，用户需要自己判断这个观点是否成立。**
+
+### UNRESOLVED：无法审计
+
+citation 没有 URL、source body 缺失、网页抓取失败、citation UI 在复制文本时丢失，或者本轮没有足够信息判断最终落点。
+
+这不代表 citation 错，也不代表内容错。它只表示：
+
+**当前系统无法完成这条 citation 的证据链追溯。**
+
+### MISMATCH：引用不对应
+
+source 可访问，也有相关片段，但 source 明显不支持原文中的 cited statement，或者与原文相矛盾。
+
+这个类别会作为 warning badge 显示，不放进主饼图里混淆用户。
+
+## 最终用户看到什么
+
+第一版界面只展示三个核心结果。
+
+```text
+事实终点：xx%
+观点终点：xx%
+无法审计：xx%
+```
+
+如果存在明显引用问题，再显示一个额外提醒：
+
+```text
+引用不对应：n 条
+```
+
+主界面不默认展示所有内部标签，不展示每条 claim 的 debug 信息，也不要求用户读一长串 support relation、risk flag 或 source opacity。
+
+用户首先看到的是一个饼图和一个聚合证据树。
+
+```text
+文档
+→ citation group
+→ source
+→ upstream source
+→ FACT / OPINION / UNRESOLVED
+```
+
+点击某个 source 或终点节点时，才展开具体 cited text。
+
+## 一个简单例子
+
+原文写：
+
+```text
+BOTZ 的费用率是 0.68%。[1]
+```
+
+如果 `[1]` 指向 Global X 的 BOTZ 官方页面，且页面确实列出 0.68% 费用率，那么这条 citation 落到 FACT。
+
+原文写：
+
+```text
+某博主认为 BOTZ 是最适合长期持有的机器人 ETF。[2]
+```
+
+如果 `[2]` 只是一个博客观点，并且博客没有继续引用事实来源，那么这条 citation 落到 OPINION。
+
+如果博客继续引用了官方基金页面、持仓数据和费用率页面，系统会继续追溯。若最终能落到这些事实来源，它可以被标记为由事实支撑的观点链路。
+
+如果 `[2]` 没有 URL，或者 source card 在复制文本时丢失，那么它落到 UNRESOLVED。
+
+## 当前产品范围
+
+当前版本是 citation only mode。
+
+它只分析已经标注 citation 的内容。未标注 citation 的段落不进入主比例统计。
+
+这不是缺陷，而是产品边界。第一版要先解决一个更明确的问题：
+
+**已经标注了来源的内容，来源到底最终落到事实还是观点？**
+
+未来可以加入未引用重要 claim 检测，但那会是另一个更复杂的功能。
+
+## 输入方式
+
+当前后端支持两类输入。
+
+### 纯文本输入
+
+用户粘贴带 citation 的文章、AI 回答或研究笔记。
+
+系统会尝试解析文本中可见的 citation marker，例如 `[1]`、Markdown link、URL 和 reference list。
+
+纯文本模式只是 fallback。它无法保证捕获原网页里的 hidden source card、hover citation、侧边栏来源或 DOM only citation。
+
+### 结构化 citation 输入
+
+浏览器插件、API 客户端或上游系统可以直接传入结构化 citation。
+
+例如：
+
+```json
+{
+  "input_mode": "browser_dom",
+  "dom_citations": [
+    {
+      "citation_id": "c1",
+      "marker_text": "[1]",
+      "source_url": "https://example.com/source",
+      "source_title": "Example Source",
+      "cited_text_span": "The company reported revenue of $10 billion.",
+      "char_start": 120,
+      "char_end": 168,
+      "capture_method": "dom_anchor",
+      "confidence": "high"
+    }
+  ]
+}
+```
+
+结构化 citation 输入优先于纯文本 parser。未来浏览器插件会主要使用这种方式。
+
+## 处理流程
+
+```text
+输入文本或结构化 citation
+→ 定位 cited statements
+→ 绑定 citation 和 source
+→ 抓取 source body
+→ 提取证据片段
+→ 判断 source 是否支撑 cited statement
+→ 如果 source 是观点，继续追踪它显式引用的上游来源
+→ 得到最终落点：FACT / OPINION / UNRESOLVED / MISMATCH
+→ 输出饼图和聚合证据树
+```
+
+系统只承认显式来源边。也就是说，只有当 source 文本中明确出现 URL、reference、citation 或上游来源声明时，才会继续追踪。系统不会因为语义相似就猜测上游来源。
 
 ## 当前能力
 
-- 输入 AI 回答、文章正文或带 citation 的文本。
-- 默认使用 citation-only mode：只分析带 citation 的句子或段落；未带 citation 的内容不进入终点统计。
-- 解析 URL、Markdown citation、脚注和参考文献 URL。
-- 将每个 cited statement 的最终落点分为 FACT、OPINION、UNRESOLVED、MISMATCH。
-- 主界面用饼图展示事实终点、观点终点、无法审计；引用错配作为 warning badge 单独显示。
-- 输出一个聚合证据树：文档 -> 引用分组 -> 来源 -> 终点。
-- 点击来源或终点节点查看具体 cited_text 列表。
-- 内部仍抽取 atomic claims，并保留 claim 分类、source support relation、risk flags 等 debug 字段。
-- 支持 provided_sources，用于把 citation URL 映射到用户提供的 source text。
-- 默认抓取显式 URL。
-- 默认搜索无 URL 的 `[1] Reuters ...` 来源说明，发现候选公开来源。
-- 输出以下比例：
-  - 事实终点比例
-  - 观点终点比例
-  - 无法审计比例
-  - 引用错配数量
-- 保留旧的 claim 级 API 字段用于调试和兼容。
-- 提供简单 Web UI。
+1. 输入 AI 回答、文章正文或带 citation 的文本。
 
-## Citation terminal audit
+2. 默认使用 citation only mode，只分析带 citation 的内容。
 
-本项目第一版产品定义是 citation terminal audit。
+3. 支持 URL、Markdown citation、脚注和 reference list。
 
-它不判断观点真假，不评价整篇文章可信度，只统计已标注 citation 最终落到事实、观点还是无法审计。
+4. 支持结构化 `dom_citations` 和 `citation_annotations` 输入。
 
-终点分类：
+5. 支持 `provided_sources`，可以把 citation URL 映射到用户提供的 source text。
 
-- `FACT`：citation 最终落到良好定义的事实来源，例如官方页面、原始数据、法律法规、公司公告、财报、论文、报告中的具体数据、访谈原文或 transcript。
-- `OPINION`：citation 最终停在观点、评论、博客、媒体分析、专家判断、投资观点、建议或价值判断，且继续追溯后没有落到事实来源。
-- `UNRESOLVED`：source 不可访问、source body 缺失、citation 没有 URL、网页抓取失败，或本轮无法判断最终落点。
-- `MISMATCH`：source 可访问且有相关片段，但 source 明显不支持 cited statement，或与 cited statement 矛盾。
+6. 把 citation 最终落点分为 FACT、OPINION、UNRESOLVED、MISMATCH。
 
-内部 claim 分类和 support relation 只用于后端，不是用户主界面。
+7. 主界面用饼图展示事实终点、观点终点和无法审计。
 
-## Demo screenshot
+8. 引用错配作为 warning badge 单独显示。
 
-下面是一段完整财经分析文本的展示结果：既有落到财报数据的事实终点，也有停在投资评论的观点终点，并保留少量无法审计和引用错配 warning。
+9. 输出文档级聚合证据树：document → citation group → source → terminal class。
 
-![Citation terminal audit finance demo](docs/assets/citation-terminal-finance-paragraph-demo.png)
+10. 内部仍保留 claim、support relation、risk flags 等 debug 字段，但默认不作为用户主界面展示。
 
-## LLM-first structured classification
+## 当前限制
 
-本项目使用 LLM first structured classification。启发式规则只用于 citation parsing、schema validation、fallback 和测试，不用于核心语义判断。
+1. 本项目不是严格意义上的 fact checker。
 
-`risk_flag` 是底层诊断，不等于 problematic citation。`problematic_citations` 只表示 cited claims 中作者真实主张的、重要的、且证据关系存在实质问题的 citation。
+2. source support check 依赖结构化 LLM 判断，不能替代人工核查。
 
-`audit_limited_citations` 只表示本轮无法完成 source support check，不表示 claim 错误。`attribution_supported_citations` 表示 source 支持“某来源说过这件事”，不表示被转述内容本身已被一手事实证明。
+3. 纯文本输入无法捕获隐藏在网页 UI 里的 citation。
 
-所有比例默认都基于 cited claims，响应中的 `summary.ratios_basis` 会写明 `based only on cited claims`。预留字段 `uncited_claim_analysis_enabled` 当前默认为 `false`。
+4. 默认抓取显式 URL，但某些网站可能因 TLS、反爬、动态渲染或登录墙抓取失败。
 
-## Display layer
+5. 没有 URL 的 citation 可能会落到 UNRESOLVED。
 
-内部诊断标签不是用户端展示标签。`claim_type`、`discourse_role`、`support_relation`、`final_bucket`、`risk_flags` 等字段仍然保留用于 debug、测试和后续分析，但默认 UI 不直接把它们作为结果标签展示。
+6. 上游来源追踪只承认显式 citation edge，不根据语义相似度猜测来源链。
 
-用户端默认状态由 `TerminalClassifier` 从结构化 claim、support、display status 和上游来源链路派生。主界面只展示事实终点、观点终点、无法审计和引用错配 warning。`claim_type`、`discourse_role`、`support_relation`、`final_bucket`、`risk_flags` 等内部字段放在高级调试信息中。
+7. MISMATCH 只表示 citation 与 cited statement 不对应，不代表整篇文章错误。
 
-系统会生成文档级聚合证据树，结构为 `document -> citation_group -> source -> terminal_class`。相同 source 会合并成一个节点，边和节点上显示 count。旧的每条 claim 证据图仍在 API 中保留用于调试。
+## 推荐产品形态
 
-## 重要限制
+当前 Web UI 适合作为开发和测试入口。
 
-- 当前 claim extraction 默认使用 Codex CLI 的快速结构化模式，也支持 OpenAI API。
-- 当前 source support check 依赖结构化 LLM 判断，不是严格事实核查。
-- 默认抓取外部网页。可在 API 请求中传 `enable_url_fetch=false` 关闭显式 URL 抓取。
-- 默认搜索无 URL 的来源说明。可在 API 请求中传 `enable_web_search=false` 关闭搜索。
-- 当前搜索 provider 使用 no-key DuckDuckGo HTML 搜索，搜索结果质量会影响 discovered source 的准确性。
-- 追踪上游来源时，只承认 source 文本中显式出现的 URL，不根据语义相似度猜测 source edge。
-- Codex/ChatGPT 订阅不能直接当作 OpenAI API key 使用；如需走订阅通道，本项目通过本机 `codex exec` 接入。
+更理想的真实使用方式是浏览器插件：
+
+```text
+用户打开 AI 回答、网页文章或研究笔记
+→ 点击插件按钮
+→ 插件从 DOM 捕获 citation、source URL 和 cited text span
+→ 后端生成 FACT / OPINION / UNRESOLVED 比例和证据树
+```
+
+插件的价值在于减少纯文本复制带来的 citation 丢失。它不会替代后端审计引擎，只负责更可靠地捕获 citation 结构。
 
 ## 安装与运行
 
@@ -102,55 +281,6 @@ http://127.0.0.1:8000
 curl http://127.0.0.1:8000/health
 ```
 
-## LLM claim extraction 测试
-
-默认请求走 Codex CLI 的快速结构化模式。先确认本机 Codex 已登录：
-
-```bash
-codex login status
-```
-
-然后请求：
-
-```bash
-curl -X POST http://127.0.0.1:8000/analyze \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "claim_extraction_mode": "codex",
-    "input_text": "OpenAI released GPT-4o in 2024, and it supports text, audio, and image inputs."
-  }'
-```
-
-默认 Codex 模型是 `gpt-5.3-codex-spark`，可以用环境变量覆盖：
-
-```bash
-export CODEX_MODEL="gpt-5.3-codex-spark"
-export CODEX_SERVICE_TIER="fast"  # 可选，默认 fast
-export CODEX_REASONING_EFFORT="low"  # 可选，默认 low
-export CODEX_TIMEOUT_SECONDS="90"  # 可选，默认 90 秒
-```
-
-如需测试 OpenAI API 抽取，先在启动后端的同一个 shell 设置 API key：
-
-```bash
-export OPENAI_API_KEY="your_api_key"
-export OPENAI_MODEL="gpt-4o-mini"  # 可选
-PYTHONPATH=backend uvicorn app.main:app --reload --app-dir backend
-```
-
-然后请求：
-
-```bash
-curl -X POST http://127.0.0.1:8000/analyze \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "claim_extraction_mode": "openai",
-    "input_text": "OpenAI released GPT-4o in 2024, and it supports text, audio, and image inputs."
-  }'
-```
-
-也可以传 `"claim_extraction_mode": "auto"`：优先使用 `OPENAI_API_KEY`，其次使用已登录的 Codex CLI。没有可用 LLM 时会返回配置错误。
-
 ## API 示例
 
 ```bash
@@ -170,20 +300,6 @@ curl -X POST http://127.0.0.1:8000/analyze \
   }'
 ```
 
-如果输入只有编号来源说明、没有 URL，默认会自动搜索。也可以显式传参：
-
-```bash
-curl -X POST http://127.0.0.1:8000/analyze \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "input_text": "The company reported revenue of $10 billion in its 2024 annual report [1].\n\n[1] 2024 annual report revenue $10 billion",
-    "enable_web_search": true,
-    "max_search_results": 2
-  }'
-```
-
-搜索发现的来源会标记为 `discovered_source`。它可以参与 claim 支撑判断，但不会被当作作者原文明确引用的上游来源。
-
 ## 运行测试
 
 ```bash
@@ -191,14 +307,20 @@ cd source_grounding_auditor
 PYTHONPATH=backend pytest -q backend/tests
 ```
 
-## 后续接入 LLM 的位置
+## 后续方向
 
-- `backend/app/providers/llm_provider.py`
-- `backend/app/claim_extractor.py`
-- `backend/app/support_checker.py`
+1. 浏览器插件捕获 DOM citation。
 
-生产版本应要求 LLM 输出符合 `backend/app/schemas.py` 中的 Pydantic schema，并在进入 analyzer 前做校验。
+2. 更强的 source body 抓取和 fallback。
 
-## 后续接入搜索的规则
+3. 更强的 evidence snippet retrieval。
 
-搜索结果只能作为 `discovered_source`，不能自动成为真实上游来源边。只有当一个 source 文本显式链接、引用或声明依赖另一个 source 时，才能创建 `upstream_source` edge。
+4. 观点 source 的显式上游引用追踪。
+
+5. 更清晰的聚合证据树交互。
+
+6. 针对 AI 回答页面、网页文章和 YouTube 描述区的 capture adapter。
+
+## 一句话总结
+
+**Source Grounding Auditor 不告诉你观点对不对。它告诉你：这篇内容的 citation 最终落到事实，还是停在观点。**

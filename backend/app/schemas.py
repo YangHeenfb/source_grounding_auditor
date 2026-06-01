@@ -11,6 +11,7 @@ class ClaimType(str, Enum):
     ATTRIBUTION = "attribution"
     JUDGMENT = "judgment"
     NON_CLAIM = "non_claim"
+    UNKNOWN_CITED_STATEMENT = "unknown_cited_statement"
 
 
 class ImportanceLabel(str, Enum):
@@ -47,6 +48,25 @@ class ClaimExtractionMode(str, Enum):
     CODEX_CLI = "codex_cli"
     MOCK = "mock"
     AUTO = "auto"
+
+
+class CitationInputMode(str, Enum):
+    TEXT_ONLY = "text_only"
+    BROWSER_DOM = "browser_dom"
+    API_ANNOTATION = "api_annotation"
+    MIXED = "mixed"
+
+
+class CitationCaptureMethod(str, Enum):
+    DOM_ANCHOR = "dom_anchor"
+    DOM_CITATION_WIDGET = "dom_citation_widget"
+    API_ANNOTATION = "api_annotation"
+    MARKDOWN_LINK = "markdown_link"
+    FOOTNOTE_MARKER = "footnote_marker"
+    RAW_URL = "raw_url"
+    REFERENCE_LIST = "reference_list"
+    TEXT_FALLBACK = "text_fallback"
+    MANUAL = "manual"
 
 
 class AccessStatus(str, Enum):
@@ -114,6 +134,15 @@ class TerminalClass(str, Enum):
     OPINION = "opinion"
     UNRESOLVED = "unresolved"
     MISMATCH = "mismatch"
+
+
+class UnresolvedReason(str, Enum):
+    NO_SOURCE_URL = "no_source_url"
+    SOURCE_FETCH_FAILED = "source_fetch_failed"
+    SOURCE_BODY_MISSING = "source_body_missing"
+    NO_RELEVANT_SNIPPET = "no_relevant_snippet"
+    CITED_SPAN_PARSE_ERROR = "cited_span_parse_error"
+    TERMINAL_MAPPING_MISSING = "terminal_mapping_missing"
 
 
 class SourceRole(str, Enum):
@@ -224,6 +253,40 @@ class ParsedCitation(BaseModel):
     span_end: int = 0
 
 
+class LocatedCitation(BaseModel):
+    citation_id: str
+    marker_text: str = ""
+    source_url: Optional[str] = None
+    source_title: Optional[str] = None
+    source_label: Optional[str] = None
+    cited_text_span: str
+    char_start: int = 0
+    char_end: int = 0
+    capture_method: CitationCaptureMethod = CitationCaptureMethod.API_ANNOTATION
+    confidence: str = "medium"
+
+
+class CitationEdge(BaseModel):
+    citation_id: str
+    label: Optional[str] = None
+    marker_text: str
+    source_url: Optional[str] = None
+    source_title: Optional[str] = None
+    source_registry_entry: Optional[str] = None
+    marker_start: int = 0
+    marker_end: int = 0
+    capture_method: str = "citation_marker"
+    confidence: str = "medium"
+
+
+class CitedStatement(BaseModel):
+    statement_id: str
+    cited_text: str
+    char_start: int = 0
+    char_end: int = 0
+    citation_edges: List[CitationEdge] = Field(default_factory=list)
+
+
 class CitationUnit(BaseModel):
     cited_text: str
     citation_label: Optional[str] = None
@@ -233,6 +296,9 @@ class CitationUnit(BaseModel):
     source_registry_entry: str = ""
     char_start: int = 0
     char_end: int = 0
+    cited_statement_id: Optional[str] = None
+    citation_edge_id: Optional[str] = None
+    citation_edges: List[CitationEdge] = Field(default_factory=list)
 
 
 class ProvidedSource(BaseModel):
@@ -270,6 +336,7 @@ class Source(BaseModel):
     metadata_basis: List[str] = Field(default_factory=list)
     officialness_status: OfficialnessStatus = OfficialnessStatus.UNKNOWN
     officialness_basis: List[str] = Field(default_factory=list)
+    fetch_method: str = ""
 
 
 class EvidenceEdge(BaseModel):
@@ -325,6 +392,9 @@ class Claim(BaseModel):
     citation_source_title: str = ""
     citation_source_id: Optional[str] = None
     source_registry_entry: str = ""
+    cited_statement_id: Optional[str] = None
+    citation_edge_id: Optional[str] = None
+    citation_edges: List[CitationEdge] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod
@@ -408,7 +478,11 @@ class AnalysisRequest(BaseModel):
     input_text: str = Field(..., min_length=1)
     original_question: Optional[str] = None
     mode: str = "ai_answer_or_article"
+    input_mode: CitationInputMode = CitationInputMode.TEXT_ONLY
+    dom_citations: Optional[List[LocatedCitation]] = None
+    citation_annotations: Optional[List[LocatedCitation]] = None
     uncited_claim_analysis_enabled: bool = False
+    split_atomic_claims: bool = False
     claim_extraction_mode: Optional[ClaimExtractionMode] = None
     max_upstream_depth: int = Field(default=2, ge=0, le=3)
     enable_url_fetch: bool = True
@@ -481,6 +555,7 @@ class CitationTerminalResult(BaseModel):
     source_url: Optional[str] = None
     terminal_class: TerminalClass = TerminalClass.UNRESOLVED
     terminal_reason: str = ""
+    unresolved_reason: Optional[UnresolvedReason] = None
     path_nodes: List[Dict[str, Any]] = Field(default_factory=list)
     path_edges: List[Dict[str, Any]] = Field(default_factory=list)
     depth: int = 0

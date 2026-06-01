@@ -13,7 +13,13 @@ from .citation_parser import (
     reference_descriptions_near_text_span,
 )
 from .citation_parser import FOOTNOTE_REF_RE
-from .citation_units import build_citation_units, parsed_citation_for_unit
+from .citation_units import (
+    build_cited_statements,
+    build_cited_statements_from_located_citations,
+    citation_units_from_cited_statements,
+    parsed_citation_for_edge,
+    parsed_citation_for_unit,
+)
 from .claim_aware_source_role_classifier import classify_claim_source_role
 from .display_status_mapper import map_claims_to_display_results
 from .document_evidence_graph_builder import build_document_evidence_graph
@@ -39,13 +45,17 @@ from .schemas import (
     ClaimReviewItem,
     ClaimExtractionMode,
     ClaimType,
+    CitationEdge,
+    CitationInputMode,
     CitationUnit,
+    CitedStatement,
     DiscourseRole,
     DisplayStatus,
     EdgeBasis,
     EdgeType,
     FinalGroundingBucket,
     ImportanceLabel,
+    LocatedCitation,
     RiskFlag,
     Source,
     SourceOpacity,
@@ -98,6 +108,65 @@ def _review_item_for_claim(claim: Claim) -> ClaimReviewItem:
     )
 
 
+def locate_citations(request: AnalysisRequest) -> dict[str, Any]:
+    structured_citations, capture_mode = _structured_citations_for_request(request)
+    if structured_citations:
+        cited_statements = build_cited_statements_from_located_citations(structured_citations)
+        return {
+            "citations": [],
+            "reference_descriptions": [],
+            "cited_statements": cited_statements,
+            "citation_capture_mode": capture_mode.value,
+            "citation_capture_coverage": _structured_capture_coverage(structured_citations),
+            "total_located_citations": len(structured_citations),
+            "structured_citation_count": len(structured_citations),
+            "text_fallback_citation_count": 0,
+            "citation_capture_note": (
+                "Structured citation input was used directly. The backend did not infer citation spans "
+                "from pasted text for these citations."
+            ),
+        }
+
+    citations = parse_citations(request.input_text)
+    reference_descriptions = parse_reference_descriptions(request.input_text)
+    cited_statements = build_cited_statements(request.input_text, citations, reference_descriptions)
+    text_fallback_count = sum(len(statement.citation_edges) for statement in cited_statements)
+    return {
+        "citations": citations,
+        "reference_descriptions": reference_descriptions,
+        "cited_statements": cited_statements,
+        "citation_capture_mode": CitationInputMode.TEXT_ONLY.value,
+        "citation_capture_coverage": "medium" if cited_statements else "low",
+        "total_located_citations": text_fallback_count,
+        "structured_citation_count": 0,
+        "text_fallback_citation_count": text_fallback_count,
+        "citation_capture_note": (
+            "Text-only parsing is a best-effort fallback that sees visible citation markers in pasted text. "
+            "Hidden UI citations, source cards, hover citations, and DOM-only links may be lost."
+        ),
+    }
+
+
+def _structured_citations_for_request(
+    request: AnalysisRequest,
+) -> tuple[list[LocatedCitation], CitationInputMode]:
+    if request.citation_annotations:
+        return list(request.citation_annotations), CitationInputMode.API_ANNOTATION
+    if request.dom_citations:
+        return list(request.dom_citations), CitationInputMode.BROWSER_DOM
+    return [], request.input_mode
+
+
+def _structured_capture_coverage(citations: list[LocatedCitation]) -> str:
+    if not citations:
+        return "low"
+    if all(citation.source_url and citation.cited_text_span.strip() for citation in citations):
+        return "high"
+    if any(citation.source_url or citation.cited_text_span.strip() for citation in citations):
+        return "medium"
+    return "low"
+
+
 class SourceGroundingAnalyzer:
     def __init__(
         self,
@@ -127,19 +196,22 @@ class SourceGroundingAnalyzer:
     ) -> AnalysisResult:
         if cancellation_token:
             cancellation_token.raise_if_cancelled()
-        _emit_progress(progress_callback, "parsing", "Parsing citations and citation-only chunks.", 0, None)
+        _emit_progress(progress_callback, "parsing", "Locating cited statements.", 0, None)
         analysis_id = str(uuid.uuid4())
-        citations = parse_citations(request.input_text)
-        reference_descriptions = parse_reference_descriptions(request.input_text)
-        citation_units = (
+        located = locate_citations(request)
+        citations = located["citations"]
+        reference_descriptions = located["reference_descriptions"]
+        cited_statements = (
             []
             if request.uncited_claim_analysis_enabled
-            else build_citation_units(request.input_text, citations, reference_descriptions)
+            else located["cited_statements"]
         )
+        citation_units = citation_units_from_cited_statements(cited_statements)
         analysis_text, cited_chunk_count = _analysis_text_for_request(
             request.input_text,
             citations,
             reference_descriptions,
+            cited_statements=cited_statements,
             citation_units=citation_units,
             uncited_claim_analysis_enabled=request.uncited_claim_analysis_enabled,
         )
@@ -148,6 +220,7 @@ class SourceGroundingAnalyzer:
             "original_question": request.original_question,
             "mode": request.mode,
             "citation_only_mode": not request.uncited_claim_analysis_enabled,
+            "split_atomic_claims": request.split_atomic_claims,
             "ratios_basis": (
                 "based on all extracted claims"
                 if request.uncited_claim_analysis_enabled
@@ -155,17 +228,28 @@ class SourceGroundingAnalyzer:
             ),
             "paragraphs": [p.strip() for p in analysis_text.split("\n\n") if p.strip()],
         }
-        _emit_progress(progress_callback, "extracting_claims", "Extracting cited atomic claims.", 0, None)
+        use_llm_claim_extraction = request.uncited_claim_analysis_enabled or request.split_atomic_claims
+        _emit_progress(
+            progress_callback,
+            "extracting_claims",
+            "Preparing cited statements for audit."
+            if not use_llm_claim_extraction
+            else "Extracting cited atomic claims.",
+            0,
+            None,
+        )
         claims = _extract_claims(
             provider,
             analysis_text,
             citations,
             context,
+            cited_statements=cited_statements,
             citation_units=citation_units,
+            use_llm_claim_extraction=use_llm_claim_extraction,
             cancellation_token=cancellation_token,
             progress_callback=progress_callback,
         )
-        _emit_progress(progress_callback, "extracting_claims", f"Extracted {len(claims)} cited claims.", len(claims), len(claims))
+        _emit_progress(progress_callback, "extracting_claims", f"Prepared {len(claims)} cited audit units.", len(claims), len(claims))
         support_checker = SupportChecker(provider)
 
         fetcher = SourceFetcher(enable_url_fetch=request.enable_url_fetch or self.enable_url_fetch)
@@ -244,44 +328,7 @@ class SourceGroundingAnalyzer:
                     )
                 )
                 continue
-
-            linked_sources: list[tuple[Source, EdgeBasis]] = []
-            if not request.uncited_claim_analysis_enabled and claim.citation_source_url:
-                linked_sources.append(
-                    (
-                        get_or_fetch_source(
-                            claim.citation_source_url,
-                            EdgeBasis.FOOTNOTE if claim.citation_label else EdgeBasis.EXPLICIT_LINK,
-                            claim.citation_source_title,
-                        ),
-                        EdgeBasis.FOOTNOTE if claim.citation_label else EdgeBasis.EXPLICIT_LINK,
-                    )
-                )
-            elif not request.uncited_claim_analysis_enabled and request.enable_web_search and claim.source_registry_entry:
-                for source in source_from_search_url(claim.source_registry_entry):
-                    linked_sources.append((source, EdgeBasis.DISCOVERED_SOURCE))
-            elif request.uncited_claim_analysis_enabled:
-                near_citations = citations_near_text_span(request.input_text, claim.original_text_span, citations)
-                for citation in near_citations:
-                    if citation.url:
-                        linked_sources.append((get_or_fetch_source(citation.url, citation.kind), citation.kind))
-
-                if request.enable_web_search:
-                    near_references = reference_descriptions_near_text_span(
-                        request.input_text,
-                        claim.original_text_span,
-                        reference_descriptions,
-                    )
-                    for reference in near_references:
-                        for source in source_from_search_url(reference.description):
-                            linked_sources.append((source, EdgeBasis.DISCOVERED_SOURCE))
-
-            # If the sentence contains vague or explicit source mentions but no URL, make the opacity auditable.
-            if not linked_sources and claim.source_mentions:
-                for mention in claim.source_mentions:
-                    linked_sources.append((make_opaque_source(mention), EdgeBasis.SOURCE_STATEMENT))
-
-            if not linked_sources:
+            if _is_cited_span_parse_error(claim.original_span or claim.original_text_span or claim.normalized_claim):
                 support_inputs.append(
                     SupportCheckInput(
                         claim=claim,
@@ -291,16 +338,102 @@ class SourceGroundingAnalyzer:
                 )
                 continue
 
-            for source, basis in linked_sources:
+            linked_sources: list[tuple[Source, EdgeBasis, CitationEdge | None]] = []
+            no_source_claims: list[Claim] = []
+            citation_edges = _citation_edges_for_claim(claim)
+            if not request.uncited_claim_analysis_enabled and citation_edges:
+                for citation_edge in citation_edges:
+                    edge_basis = EdgeBasis.FOOTNOTE if citation_edge.label else EdgeBasis.EXPLICIT_LINK
+                    if citation_edge.source_url:
+                        linked_sources.append(
+                            (
+                                get_or_fetch_source(
+                                    citation_edge.source_url,
+                                    edge_basis,
+                                    citation_edge.source_title or "",
+                                ),
+                                edge_basis,
+                                citation_edge,
+                            )
+                        )
+                    elif request.enable_web_search and citation_edge.source_registry_entry:
+                        for source in source_from_search_url(citation_edge.source_registry_entry):
+                            linked_sources.append((source, EdgeBasis.DISCOVERED_SOURCE, citation_edge))
+                    else:
+                        no_source_claims.append(_claim_for_citation_edge(claim, citation_edge))
+            elif not request.uncited_claim_analysis_enabled and claim.citation_source_url:
+                linked_sources.append(
+                    (
+                        get_or_fetch_source(
+                            claim.citation_source_url,
+                            EdgeBasis.FOOTNOTE if claim.citation_label else EdgeBasis.EXPLICIT_LINK,
+                            claim.citation_source_title,
+                        ),
+                        EdgeBasis.FOOTNOTE if claim.citation_label else EdgeBasis.EXPLICIT_LINK,
+                        None,
+                    )
+                )
+            elif not request.uncited_claim_analysis_enabled and request.enable_web_search and claim.source_registry_entry:
+                for source in source_from_search_url(claim.source_registry_entry):
+                    linked_sources.append((source, EdgeBasis.DISCOVERED_SOURCE, None))
+            elif request.uncited_claim_analysis_enabled:
+                near_citations = citations_near_text_span(request.input_text, claim.original_text_span, citations)
+                for citation in near_citations:
+                    if citation.url:
+                        linked_sources.append((get_or_fetch_source(citation.url, citation.kind), citation.kind, None))
+
+                if request.enable_web_search:
+                    near_references = reference_descriptions_near_text_span(
+                        request.input_text,
+                        claim.original_text_span,
+                        reference_descriptions,
+                    )
+                    for reference in near_references:
+                        for source in source_from_search_url(reference.description):
+                            linked_sources.append((source, EdgeBasis.DISCOVERED_SOURCE, None))
+
+            # If the sentence contains vague or explicit source mentions but no URL, make the opacity auditable.
+            if (
+                not linked_sources
+                and not no_source_claims
+                and claim.source_mentions
+                and request.uncited_claim_analysis_enabled
+            ):
+                for mention in claim.source_mentions:
+                    linked_sources.append((make_opaque_source(mention), EdgeBasis.SOURCE_STATEMENT, None))
+
+            for no_source_claim in no_source_claims:
+                support_inputs.append(
+                    SupportCheckInput(
+                        claim=no_source_claim,
+                        source=None,
+                        basis=EdgeBasis.NONE,
+                    )
+                )
+
+            if not linked_sources and not no_source_claims:
+                support_inputs.append(
+                    SupportCheckInput(
+                        claim=claim,
+                        source=None,
+                        basis=EdgeBasis.NONE,
+                    )
+                )
+                continue
+
+            for source, basis, citation_edge in linked_sources:
+                support_claim = _claim_for_citation_edge(claim, citation_edge) if citation_edge else claim
                 claim.linked_source_ids.append(source.source_id)
-                if claim.citation_source_url and _source_key_for_url(claim.citation_source_url) == _source_key_for_url(source.url or ""):
+                support_claim.linked_source_ids.append(source.source_id)
+                if support_claim.citation_source_url and _source_key_for_url(support_claim.citation_source_url) == _source_key_for_url(source.url or ""):
                     claim.citation_source_id = source.source_id
+                    support_claim.citation_source_id = source.source_id
                 # Trace explicit upstream links from this source body only. The claim's final edge remains the direct citation.
                 tracer.trace(source, existing_sources=sources_by_id, max_depth=request.max_upstream_depth)
                 edge_type = EdgeType.DISCOVERED_SOURCE if basis == EdgeBasis.DISCOVERED_SOURCE else EdgeType.AUTHOR_CITED
                 support_inputs.append(
                     SupportCheckInput(
-                        claim=claim,
+                        claim=support_claim,
                         source=source,
                         edge_type=edge_type,
                         basis=basis,
@@ -429,8 +562,10 @@ class SourceGroundingAnalyzer:
             excluded_or_context_claims=excluded_or_context_citations,
             metadata={
                 "mode": request.mode,
+                "input_mode": request.input_mode.value,
                 "citation_only_mode": not request.uncited_claim_analysis_enabled,
                 "uncited_claim_analysis_enabled": request.uncited_claim_analysis_enabled,
+                "split_atomic_claims": request.split_atomic_claims,
                 "ratios_basis": summary.ratios_basis,
                 "cited_chunk_count": cited_chunk_count,
                 "requested_claim_extraction_mode": (
@@ -465,8 +600,16 @@ class SourceGroundingAnalyzer:
                 "enable_web_search": request.enable_web_search,
                 "citation_count": len(citations),
                 "reference_description_count": len(reference_descriptions),
+                "cited_statements": [statement.model_dump(mode="json") for statement in cited_statements],
+                "cited_statement_count": len(cited_statements),
                 "citation_units": [unit.model_dump(mode="json") for unit in citation_units],
                 "citation_unit_count": len(citation_units),
+                "citation_capture_mode": located["citation_capture_mode"],
+                "citation_capture_coverage": located["citation_capture_coverage"],
+                "total_located_citations": located["total_located_citations"],
+                "structured_citation_count": located["structured_citation_count"],
+                "text_fallback_citation_count": located["text_fallback_citation_count"],
+                "citation_capture_note": located["citation_capture_note"],
                 "search_query_count": search_query_count,
                 "search_result_count": search_result_count,
                 "note": "MVP mode: no truth verdict or single credibility score is produced.",
@@ -678,11 +821,42 @@ def _extract_claims(
     citations,
     context: dict[str, Any],
     *,
+    cited_statements: list[CitedStatement],
     citation_units: list[CitationUnit],
+    use_llm_claim_extraction: bool,
     cancellation_token: CancellationToken | None,
     progress_callback: ProgressCallback | None,
 ) -> list[Claim]:
+    if cited_statements:
+        if not use_llm_claim_extraction:
+            _emit_progress(
+                progress_callback,
+                "extracting_claims",
+                f"Creating cited audit units for {len(cited_statements)} cited statements.",
+                0,
+                len(cited_statements),
+            )
+            return claims_from_cited_statements_without_llm(cited_statements)
+        return _extract_claims_from_cited_statements(
+            provider,
+            cited_statements,
+            context,
+            cancellation_token=cancellation_token,
+            progress_callback=progress_callback,
+        )
     if citation_units:
+        if not use_llm_claim_extraction:
+            statements_by_id = {
+                unit.cited_statement_id: CitedStatement(
+                    statement_id=unit.cited_statement_id or f"stmt_{index+1:03d}",
+                    cited_text=unit.cited_text,
+                    char_start=unit.char_start,
+                    char_end=unit.char_end,
+                    citation_edges=list(unit.citation_edges),
+                )
+                for index, unit in enumerate(citation_units)
+            }
+            return claims_from_cited_statements_without_llm(list(statements_by_id.values()))
         return _extract_claims_from_citation_units(
             provider,
             citation_units,
@@ -719,6 +893,108 @@ def _extract_claims(
             ))
         except LLMProviderTimeoutError as exc:
             claims.append(_audit_limited_extraction_timeout_claim(chunk, exc))
+    return _renumber_claims(claims)
+
+
+def claims_from_cited_statements_without_llm(cited_statements: list[CitedStatement]) -> list[Claim]:
+    claims: list[Claim] = []
+    for index, statement in enumerate(cited_statements, start=1):
+        cited_text = statement.cited_text.strip()
+        if not cited_text:
+            continue
+        first_edge = statement.citation_edges[0] if statement.citation_edges else None
+        span_parse_error = _is_cited_span_parse_error(cited_text)
+        claims.append(
+            Claim(
+                claim_id=f"c{index:03d}",
+                original_text_span=cited_text,
+                original_span=cited_text,
+                normalized_claim=cited_text,
+                claim_type=ClaimType.UNKNOWN_CITED_STATEMENT if span_parse_error else ClaimType.FACTUAL,
+                discourse_role=DiscourseRole.ASSERTED_CLAIM,
+                source_opacity=SourceOpacity.NOT_APPLICABLE,
+                has_quantitative_data=any(char.isdigit() for char in cited_text),
+                has_material_quantitative_data=False,
+                importance_label=ImportanceLabel.SUPPORTING,
+                final_bucket=FinalGroundingBucket.UNVERIFIABLE_OR_MISMATCH,
+                support_relation=SupportRelation.INACCESSIBLE if span_parse_error else SupportRelation.NOT_CHECKED,
+                review_category=(
+                    ClaimReviewCategory.AUDIT_LIMITED
+                    if span_parse_error
+                    else ClaimReviewCategory.FLAGGED_BUT_NOT_HIGH_RISK
+                ),
+                risk_flags=[RiskFlag.INACCESSIBLE_SOURCE] if span_parse_error else [],
+                reasoning_summary=(
+                    "Cited span could not be parsed from the visible citation marker."
+                    if span_parse_error
+                    else ""
+                ),
+                evidence_needed=(
+                    ["A corrected cited text span for this citation."]
+                    if span_parse_error
+                    else []
+                ),
+                cited_statement_id=statement.statement_id,
+                citation_edge_id=first_edge.citation_id if first_edge else None,
+                citation_label=first_edge.label if first_edge else None,
+                citation_source_url=first_edge.source_url if first_edge else None,
+                citation_source_title=(first_edge.source_title or "") if first_edge else "",
+                source_registry_entry=(first_edge.source_registry_entry or "") if first_edge else "",
+                citation_edges=list(statement.citation_edges),
+            )
+        )
+    return _renumber_claims(claims)
+
+
+def _is_cited_span_parse_error(text: str) -> bool:
+    cleaned = re.sub(r"\s+", "", text or "")
+    if not cleaned:
+        return True
+    return bool(re.fullmatch(r"[*_`~]+", cleaned))
+
+
+def _extract_claims_from_cited_statements(
+    provider: LLMProvider,
+    cited_statements: list[CitedStatement],
+    context: dict[str, Any],
+    *,
+    cancellation_token: CancellationToken | None,
+    progress_callback: ProgressCallback | None,
+) -> list[Claim]:
+    claims: list[Claim] = []
+    for index, statement in enumerate(cited_statements, start=1):
+        if cancellation_token:
+            cancellation_token.raise_if_cancelled()
+        _emit_progress(
+            progress_callback,
+            "extracting_claims",
+            f"Extracting cited atomic claims, cited statement {index} of {len(cited_statements)}.",
+            index - 1,
+            len(cited_statements),
+        )
+        statement_context = dict(context)
+        statement_context["cited_statement"] = statement.model_dump(mode="json")
+        statement_context["citation_edges"] = [
+            edge.model_dump(mode="json") for edge in statement.citation_edges
+        ]
+        statement_context["paragraphs"] = [statement.cited_text]
+        statement_citations = [
+            parsed_citation_for_edge(edge, f"cited_stmt_{index:03d}_edge_{edge_index:03d}")
+            for edge_index, edge in enumerate(statement.citation_edges, start=1)
+        ]
+        try:
+            extracted = _run_async(
+                provider.extract_claims(
+                    statement.cited_text,
+                    statement_citations,
+                    statement_context,
+                    cancellation_token=cancellation_token,
+                )
+            )
+        except LLMProviderTimeoutError as exc:
+            extracted = [_audit_limited_extraction_timeout_claim(statement.cited_text, exc)]
+        for claim in extracted:
+            claims.append(_attach_cited_statement_to_claim(claim, statement))
     return _renumber_claims(claims)
 
 
@@ -767,10 +1043,62 @@ def _attach_citation_unit_to_claim(claim: Claim, unit: CitationUnit) -> Claim:
     updated.citation_source_url = unit.source_url
     updated.citation_source_title = unit.source_title
     updated.source_registry_entry = unit.source_registry_entry
+    updated.cited_statement_id = unit.cited_statement_id
+    updated.citation_edge_id = unit.citation_edge_id
+    updated.citation_edges = list(unit.citation_edges)
     if not updated.original_text_span:
         updated.original_text_span = unit.cited_text
     if not updated.original_span:
         updated.original_span = updated.original_text_span
+    return updated
+
+
+def _attach_cited_statement_to_claim(claim: Claim, statement: CitedStatement) -> Claim:
+    updated = claim.model_copy(deep=True)
+    updated.cited_statement_id = statement.statement_id
+    updated.citation_edges = list(statement.citation_edges)
+    if statement.citation_edges:
+        first_edge = statement.citation_edges[0]
+        updated.citation_edge_id = first_edge.citation_id
+        updated.citation_label = first_edge.label
+        updated.citation_source_url = first_edge.source_url
+        updated.citation_source_title = first_edge.source_title or ""
+        updated.source_registry_entry = first_edge.source_registry_entry or ""
+    if not updated.original_text_span:
+        updated.original_text_span = statement.cited_text
+    if not updated.original_span:
+        updated.original_span = updated.original_text_span
+    return updated
+
+
+def _citation_edges_for_claim(claim: Claim) -> list[CitationEdge]:
+    if claim.citation_edges:
+        return list(claim.citation_edges)
+    if claim.citation_label or claim.citation_source_url or claim.source_registry_entry:
+        return [
+            CitationEdge(
+                citation_id=claim.citation_edge_id or f"{claim.claim_id}_edge_001",
+                label=claim.citation_label,
+                marker_text=f"[{claim.citation_label}]" if claim.citation_label else (claim.citation_source_url or ""),
+                source_url=claim.citation_source_url,
+                source_title=claim.citation_source_title,
+                source_registry_entry=claim.source_registry_entry,
+                capture_method="compatibility",
+                confidence="low",
+            )
+        ]
+    return []
+
+
+def _claim_for_citation_edge(claim: Claim, edge: CitationEdge | None) -> Claim:
+    if edge is None:
+        return claim
+    updated = claim.model_copy(deep=True)
+    updated.citation_edge_id = edge.citation_id
+    updated.citation_label = edge.label
+    updated.citation_source_url = edge.source_url
+    updated.citation_source_title = edge.source_title or ""
+    updated.source_registry_entry = edge.source_registry_entry or ""
     return updated
 
 
@@ -881,11 +1209,14 @@ def _analysis_text_for_request(
     citations,
     reference_descriptions,
     *,
+    cited_statements: list[CitedStatement],
     citation_units: list[CitationUnit],
     uncited_claim_analysis_enabled: bool,
 ) -> tuple[str, int]:
     if uncited_claim_analysis_enabled:
         return input_text, len([p for p in input_text.split("\n\n") if p.strip()])
+    if cited_statements:
+        return "\n\n".join(statement.cited_text for statement in cited_statements), len(cited_statements)
     if citation_units:
         return "\n\n".join(unit.cited_text for unit in citation_units), len(citation_units)
 

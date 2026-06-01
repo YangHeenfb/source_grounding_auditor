@@ -12,6 +12,7 @@ FOOTNOTE_DEF_RE = re.compile(r"(?m)^\s*\[?\^?(\d+)\]?\s*[:.]\s*(https?://\S+)(?:
 FOOTNOTE_REF_RE = re.compile(r"\[(?:\^)?(\d+)\]")
 REFERENCE_LINE_RE = re.compile(r"(?m)^\s*(?:\[(\d+)\]|(\d+)\.|-)\s*(.+?)(https?://\S+)\s*$")
 REFERENCE_DESCRIPTION_LINE_RE = re.compile(r"(?m)^\s*\[(\d+)\]\s*(?![:.]?\s*https?://)(.+?)\s*$")
+SENTENCE_BOUNDARY_PUNCTUATION = "。！？；;.!?"
 
 
 @dataclass
@@ -25,6 +26,75 @@ class ReferenceDescription:
 
 def _clean_url(url: str) -> str:
     return url.strip().rstrip(".,;:)]}")
+
+
+def is_sentence_boundary_punctuation(text: str, index: int) -> bool:
+    if index < 0 or index >= len(text):
+        return False
+    char = text[index]
+    if char not in SENTENCE_BOUNDARY_PUNCTUATION:
+        return False
+    # Avoid treating decimal points in numbers as sentence boundaries.
+    if (
+        char == "."
+        and index > 0
+        and index + 1 < len(text)
+        and text[index - 1].isdigit()
+        and text[index + 1].isdigit()
+    ):
+        return False
+    return True
+
+
+def citation_anchored_left_boundary(text: str, end: int, floor: int = 0) -> int:
+    """Find a conservative left boundary for text that ends near a citation marker.
+
+    This helper is used by the citation-anchored parser and by legacy fallback
+    windowing so Chinese citation-only text does not collapse into a whole
+    paragraph when markers are written as ``句子。[1]下一句。[2]``.
+    """
+
+    if not text:
+        return 0
+    floor = max(0, min(floor, len(text)))
+    probe = max(floor, min(end, len(text)))
+    while probe > floor and text[probe - 1].isspace():
+        probe -= 1
+    # If the citation follows sentence-ending punctuation, that punctuation is
+    # part of the current cited statement, not the boundary before it.
+    if probe > floor and is_sentence_boundary_punctuation(text, probe - 1):
+        probe -= 1
+    i = probe - 1
+    while i >= floor:
+        if text[i] == "\n":
+            return i + 1
+        if is_sentence_boundary_punctuation(text, i):
+            return i + 1
+        i -= 1
+    return floor
+
+
+def citation_anchored_right_boundary(text: str, start: int) -> int:
+    """Find a conservative right boundary for legacy fallback windowing."""
+
+    if not text:
+        return 0
+    i = max(0, min(start, len(text)))
+    while i < len(text):
+        if text[i] == "\n":
+            return i
+        if is_sentence_boundary_punctuation(text, i):
+            right = i + 1
+            # Include citation labels that immediately follow sentence punctuation
+            # so legacy callers can still see the marker in the same window.
+            while True:
+                match = FOOTNOTE_REF_RE.match(text, right)
+                if not match:
+                    break
+                right = match.end()
+            return right
+        i += 1
+    return len(text)
 
 
 def parse_citations(text: str) -> List[ParsedCitation]:
@@ -110,16 +180,17 @@ def parse_reference_descriptions(text: str) -> list[ReferenceDescription]:
 
 
 def sentence_window_for_span(text: str, start: int, end: int) -> tuple[int, int]:
-    """Return a rough sentence/paragraph window around a text span."""
+    """Return a legacy rough window around a text span.
+
+    Citation-only mode uses the citation-anchored parser instead of this helper.
+    This fallback still uses the same boundary helpers so Chinese text with
+    inline citation markers does not swallow a whole paragraph.
+    """
 
     if not text:
         return (0, 0)
-    left_candidates = [text.rfind(p, 0, start) for p in [".", "!", "?", "\n"]]
-    left = max(left_candidates)
-    left = 0 if left == -1 else min(left + 1, len(text))
-    right_positions = [text.find(p, end) for p in [".", "!", "?", "\n"]]
-    right_positions = [p for p in right_positions if p != -1]
-    right = min(right_positions) + 1 if right_positions else len(text)
+    left = citation_anchored_left_boundary(text, start)
+    right = citation_anchored_right_boundary(text, end)
     return (left, right)
 
 

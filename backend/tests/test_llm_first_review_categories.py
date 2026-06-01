@@ -58,6 +58,7 @@ def analyze_with_claims(claims, **request_kwargs):
             input_text=input_text,
             enable_url_fetch=False,
             enable_web_search=False,
+            split_atomic_claims=True,
             **request_kwargs,
         )
     )

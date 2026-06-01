@@ -60,6 +60,8 @@
       display: inline-flex; align-items: center; gap: 8px; border-radius: 999px; padding: 8px 12px;
       background: #fff7ed; color: #9a3412; border: 1px solid #fed7aa; font-weight: 800;
     }
+    .reason-breakdown { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .reason-chip { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; border-radius: 999px; padding: 5px 9px; font-size: 12px; }
     .graph-help { margin: 0 0 12px; }
     .terminal-graph { overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 12px; background: #f8fafc; padding: 14px; }
     .graph-columns { display: grid; grid-template-columns: 180px 210px 250px 210px; gap: 14px; min-width: 900px; }
@@ -131,6 +133,7 @@
           <p id="terminalSummaryLine" class="summary-line"></p>
           <div style="height:14px"></div>
           <span id="mismatchBadge" class="warning-badge"></span>
+          <div id="unresolvedBreakdown" class="reason-breakdown"></div>
         </section>
         <section class="card">
           <div class="pie-wrap">
@@ -177,6 +180,14 @@ const terminalColors = {
   opinion: 'var(--opinion)',
   unresolved: 'var(--unresolved)'
 };
+const unresolvedReasonLabels = {
+  no_source_url: '缺少 URL',
+  source_fetch_failed: '抓取失败',
+  source_body_missing: '来源正文为空',
+  no_relevant_snippet: '没有召回证据片段',
+  cited_span_parse_error: 'citation span 解析失败',
+  terminal_mapping_missing: 'terminal mapping 缺口'
+};
 
 function progressText(job) {
   const progress = job.progress || {};
@@ -217,14 +228,14 @@ function render(result) {
   document.getElementById('results').style.display = 'block';
   const summary = result.document_evidence_summary || {};
   const terminalResults = result.citation_terminal_results || [];
-  renderSummary(summary);
+  renderSummary(summary, terminalResults);
   renderPie(summary);
   renderDocumentGraph(result.document_evidence_graph || { nodes: [], edges: [] });
   renderTerminalResultList(terminalResults);
   renderAdvancedDebug(result);
 }
 
-function renderSummary(summary) {
+function renderSummary(summary, terminalResults = []) {
   const total = summary.total_cited_statements || 0;
   const fact = summary.fact_terminal_count || 0;
   const opinion = summary.opinion_terminal_count || 0;
@@ -235,6 +246,24 @@ function renderSummary(summary) {
   const badge = document.getElementById('mismatchBadge');
   badge.textContent = `引用不对应 ${mismatch} 条`;
   badge.style.display = mismatch ? 'inline-flex' : 'none';
+  renderUnresolvedBreakdown(terminalResults);
+}
+
+function renderUnresolvedBreakdown(terminalResults) {
+  const counts = new Map();
+  (terminalResults || []).forEach(item => {
+    if (item.terminal_class !== 'unresolved') return;
+    const reason = item.unresolved_reason || 'terminal_mapping_missing';
+    counts.set(reason, (counts.get(reason) || 0) + 1);
+  });
+  const target = document.getElementById('unresolvedBreakdown');
+  if (!counts.size) {
+    target.innerHTML = '';
+    return;
+  }
+  target.innerHTML = Array.from(counts.entries()).map(([reason, count]) =>
+    `<span class="reason-chip">${escapeHtml(unresolvedReasonLabels[reason] || reason)} · ${count}</span>`
+  ).join('');
 }
 
 function renderPie(summary) {
@@ -328,7 +357,9 @@ function renderTerminalResultList(results) {
     <article class="terminal-item">
       <strong>${escapeHtml(terminalLabels[result.terminal_class] || result.terminal_class)}</strong>
       <p>${escapeHtml(result.cited_text)}</p>
-      <p class="muted small">${escapeHtml(result.source_title || result.source_url || '未解析来源')} · ${escapeHtml(result.short_explanation || '')}</p>
+      <p class="muted small">${escapeHtml(result.source_title || result.source_url || '未解析来源')} · ${escapeHtml(result.short_explanation || '')}${
+        result.unresolved_reason ? ` · 原因：${escapeHtml(unresolvedReasonLabels[result.unresolved_reason] || result.unresolved_reason)}` : ''
+      }</p>
     </article>
   `).join('') : '<p class="muted">没有带引用的陈述。</p>';
 }

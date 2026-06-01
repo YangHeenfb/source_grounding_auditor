@@ -77,6 +77,7 @@ def test_codex_mode_uses_configured_codex_extractor():
             claim_extraction_mode=ClaimExtractionMode.CODEX,
             enable_web_search=False,
             enable_url_fetch=False,
+            split_atomic_claims=True,
         )
     )
 

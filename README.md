@@ -1,4 +1,4 @@
-# Source Grounding Auditor MVP
+# Source Grounding Auditor
 
 这个项目第一版是 citation terminal audit：给定带 citation 的文章或 AI 回答，统计已标注 citation 最终落到事实、观点还是无法审计。它不判断观点真假，不评价整篇文章可信度，也不输出单一可信度分数。
 

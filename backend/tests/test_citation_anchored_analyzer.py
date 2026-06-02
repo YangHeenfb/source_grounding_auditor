@@ -564,3 +564,147 @@ def test_cuhk_analysis_from_official_premise_is_opinion_not_mismatch():
     assert result.citation_terminal_results[0].terminal_reason == "opinion_with_fact_premise"
     assert result.citation_terminal_results[0].unresolved_reason is None
     assert all(item.terminal_reason != "terminal_mapping_missing" for item in result.citation_terminal_results)
+
+
+def test_stock_price_formation_golden_retrieves_bilingual_finance_snippets():
+    text = (
+        "**最近一次成交价格不一定等于你下市价单时真正成交的价格。**[1] "
+        "股票代表公司所有权的一部分，投资者买股票的原因包括资本增值、分红以及投票权。[2] "
+        "股价可以理解为未来收益折现并补偿风险后的结果。[3] "
+        "分红是公司利润的一部分，支付给股东。[4] "
+        "普通股股东在破产清算时通常排在债权人和优先股股东之后。[5]\n\n"
+        "来源指针\n"
+        "[1] Investor.gov 对市价单和限价单的解释：market order 按可得价格执行，"
+        "last-traded price 不一定是成交价格，limit order 指定价格或更好。([Investor.gov][1])\n"
+        "[2] Investor.gov 对股票的解释：股票代表公司所有权的一部分；"
+        "投资者买股票的原因包括资本增值、分红以及投票权。([Investor.gov][2])\n"
+        "[3] Federal Reserve 对资产估值的解释：asset price equals expected discounted value "
+        "of future payoffs, and investors require risk compensation or risk premium.([Federal Reserve][3])\n"
+        "[4] Investor.gov Dividend 词条：dividend is a portion of company profit paid to shareholders.([Investor.gov][4])\n"
+        "[5] Investor.gov Stocks FAQ：common stockholders are last in line; bondholders and "
+        "preferred stockholders are paid before common stockholders in bankruptcy liquidation.([Investor.gov][2])\n\n"
+        '[1]: https://www.investor.gov/introduction-investing/general-resources/news-alerts/alerts-bulletins/investor-bulletins-14 "Order Types"\n'
+        '[2]: https://www.investor.gov/introduction-investing/investing-basics/investment-products/stocks "Stocks FAQ"\n'
+        '[3]: https://www.federalreserve.gov/publications/may-2021-asset-valuations.htm "Asset Valuations"\n'
+        '[4]: https://www.investor.gov/introduction-investing/investing-basics/glossary/dividend "Dividend"'
+    )
+    captured_bundles = {}
+
+    def support_with_snippet_assertions(claim: Claim, source_bundle):
+        captured_bundles[claim.citation_label] = source_bundle
+        assert source_bundle["snippet_retrieval_status"] in {"lexical_match", "semantic_match", "semantic_rerank_needed"}
+        snippet_text = " ".join(snippet["text"] for snippet in source_bundle["evidence_snippets"]).lower()
+        if claim.citation_label == "1":
+            assert "market order" in snippet_text
+            assert "last-traded price" in snippet_text
+            assert "limit order" in snippet_text
+            relation = SupportRelation.PARTIALLY_SUPPORTS
+            bucket = FinalGroundingBucket.WEAK_FACT_GROUNDING
+        elif claim.citation_label == "2":
+            assert "share of ownership" in snippet_text
+            assert "capital appreciation" in snippet_text
+            assert "dividend payments" in snippet_text
+            relation = SupportRelation.DIRECTLY_SUPPORTS
+            bucket = FinalGroundingBucket.HARD_FACT_GROUNDING
+        elif claim.citation_label == "3":
+            assert "expected discounted value" in snippet_text
+            assert "future payoffs" in snippet_text
+            assert "risk premium" in snippet_text
+            relation = SupportRelation.PARTIALLY_SUPPORTS
+            bucket = FinalGroundingBucket.WEAK_FACT_GROUNDING
+        elif claim.citation_label == "4":
+            assert "portion of a company's profit paid to shareholders" in snippet_text
+            relation = SupportRelation.DIRECTLY_SUPPORTS
+            bucket = FinalGroundingBucket.HARD_FACT_GROUNDING
+        else:
+            assert "common stockholders are the last in line" in snippet_text
+            assert "bondholders will be paid first" in snippet_text
+            relation = SupportRelation.DIRECTLY_SUPPORTS
+            bucket = FinalGroundingBucket.HARD_FACT_GROUNDING
+        return {
+            "support_relation": relation.value,
+            "final_bucket": bucket.value,
+            "risk_flags": [],
+            "reasoning_summary": "The retrieved evidence snippets support the cited statement or its factual premise.",
+            "evidence_quote": source_bundle["evidence_snippets"][0]["text"][:300],
+            "source_role": SourceRole.PRIMARY_FACT_SOURCE.value,
+        }
+
+    provider = CountingProvider(support_outputs=support_with_snippet_assertions)
+    analyzer = SourceGroundingAnalyzer(enable_url_fetch=False, llm_provider=provider)
+    result = analyzer.analyze(
+        AnalysisRequest(
+            input_text=text,
+            enable_url_fetch=False,
+            enable_web_search=False,
+            provided_sources=[
+                {
+                    "url": "https://www.investor.gov/introduction-investing/general-resources/news-alerts/alerts-bulletins/investor-bulletins-14",
+                    "title": "Investor Bulletin: Understanding Order Types | Investor.gov",
+                    "source_type": "primary_fact_source",
+                    "extracted_text": (
+                        "MARKET, LIMIT and STOP ORDERS Market Order A market order is an order to buy or sell "
+                        "a stock at the best available price. It is important for investors to remember that the "
+                        "last-traded price is not necessarily the price at which a market order will be executed. "
+                        "Limit Order A limit order is an order to buy or sell a stock at a specific price or better."
+                    ),
+                    "access_status": "accessible",
+                },
+                {
+                    "url": "https://www.investor.gov/introduction-investing/investing-basics/investment-products/stocks",
+                    "title": "Stocks - FAQs | Investor.gov",
+                    "source_type": "primary_fact_source",
+                    "extracted_text": (
+                        "Stocks are a type of security that gives stockholders a share of ownership in a company. "
+                        "Capital appreciation occurs when a stock rises in price. Dividend payments come when the "
+                        "company distributes some of its earnings to stockholders. Preferred stockholders usually "
+                        "receive dividend payments before common stockholders do, and have priority over common "
+                        "stockholders if the company goes bankrupt and its assets are liquidated. The company's "
+                        "bondholders will be paid first, then holders of preferred stock. If a company goes bankrupt "
+                        "and its assets are liquidated, common stockholders are the last in line to share in the proceeds. "
+                        "If you are a common stockholder, you get whatever is left, which may be nothing."
+                    ),
+                    "access_status": "accessible",
+                },
+                {
+                    "url": "https://www.federalreserve.gov/publications/may-2021-asset-valuations.htm",
+                    "title": "The Fed - 1. Asset Valuations",
+                    "source_type": "primary_fact_source",
+                    "extracted_text": (
+                        "According to a long-standing theory, an asset's price should equal the expected discounted "
+                        "value today of future payoffs from holding assets. The difference in the expected returns "
+                        "between risky assets and Treasury securities is the risk premium investors expect to receive "
+                        "as compensation for the risk they take. An increase in asset prices might reflect higher "
+                        "expected future payoffs or a decline in interest rates."
+                    ),
+                    "access_status": "accessible",
+                },
+                {
+                    "url": "https://www.investor.gov/introduction-investing/investing-basics/glossary/dividend",
+                    "title": "Dividend | Investor.gov",
+                    "source_type": "primary_fact_source",
+                    "extracted_text": (
+                        "Role of the SEC How to Submit Comments to the SEC Researching the Federal Securities Laws "
+                        "Through the SEC Website The Laws That Govern the Securities Industry Dividend A portion "
+                        "of a company's profit paid to shareholders. Public companies that pay dividends usually "
+                        "do so on a fixed schedule."
+                    ),
+                    "access_status": "accessible",
+                },
+            ],
+        )
+    )
+
+    assert provider.extract_calls == 0
+    assert result.metadata["cited_statement_count"] == 5
+    assert len(result.claims) == 5
+    assert set(captured_bundles) == {"1", "2", "3", "4", "5"}
+    assert not result.claims[0].normalized_claim.startswith("**")
+    assert all(
+        claim.support_relation != SupportRelation.AUDIT_LIMITED_NO_RELEVANT_SNIPPET
+        for claim in result.claims
+    )
+    assert all(
+        terminal.unresolved_reason != UnresolvedReason.NO_RELEVANT_SNIPPET
+        for terminal in result.citation_terminal_results
+    )

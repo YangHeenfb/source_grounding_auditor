@@ -8,6 +8,7 @@ from typing import Any
 from .evidence_snippet_retriever import retrieve_evidence_snippets_with_reason
 from .providers.llm_provider import LLMProvider, LLMProviderError, LLMProviderTimeoutError
 from .providers.llm_provider import CancellationToken
+from .semantic_snippet_reranker import rerank_candidate_snippets
 from .schemas import (
     AccessStatus,
     Claim,
@@ -223,11 +224,31 @@ class SupportChecker:
         if source is None:
             return {}
         source_text = source.extracted_text or ""
+        source_pointer_description = claim.source_registry_entry or ""
         retrieval = retrieve_evidence_snippets_with_reason(
             " ".join(part for part in [claim.original_text_span, claim.normalized_claim] if part),
             source_text,
+            source_pointer_description=source_pointer_description,
+            source_title=source.title,
+            source_url=source.url or "",
         )
         snippets = retrieval.snippets
+        snippet_status = retrieval.status
+        semantic_rerank = None
+        if snippet_status == "semantic_rerank_needed" and snippets:
+            semantic_rerank = rerank_candidate_snippets(
+                cited_text=" ".join(part for part in [claim.original_text_span, claim.normalized_claim] if part),
+                source_title=source.title,
+                source_pointer_description=source_pointer_description,
+                candidate_snippets=snippets,
+            )
+            if semantic_rerank.selected_snippet_indexes:
+                snippets = [
+                    snippets[index]
+                    for index in semantic_rerank.selected_snippet_indexes
+                    if 0 <= index < len(snippets)
+                ]
+                snippet_status = "semantic_match"
         snippet_text = "\n".join(snippet.text for snippet in snippets)
         return {
             "source_id": source.source_id,
@@ -247,8 +268,10 @@ class SupportChecker:
                 {"text": snippet.text, "score": snippet.score, "basis": snippet.basis}
                 for snippet in snippets
             ],
-            "snippet_retrieval_status": "ok" if snippets else "no_relevant_snippet",
+            "snippet_retrieval_status": snippet_status if snippets else "no_relevant_snippet",
             "snippet_failure_reason": retrieval.failure_reason,
+            "snippet_retrieval_query": retrieval.retrieval_query,
+            "semantic_rerank": semantic_rerank.model_dump(mode="json") if semantic_rerank else None,
             "extracted_text": snippet_text[:MAX_SOURCE_TEXT_CHARS],
             "extracted_text_preview": source.extracted_text_preview,
         }

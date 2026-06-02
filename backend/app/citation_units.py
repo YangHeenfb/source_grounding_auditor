@@ -334,7 +334,7 @@ def _cited_text_for_cluster(text: str, left: int, cluster_start: int, cluster_en
     suffix = ""
     if right > cluster_end:
         suffix = text[cluster_end:right].strip()
-    return f"{prefix}{suffix}".strip()
+    return _strip_markdown_boundary_markers(f"{prefix}{suffix}".strip())
 
 
 def _skip_markdown_closing_markers_left(text: str, index: int, *, floor: int = 0) -> int:
@@ -345,6 +345,16 @@ def _skip_markdown_closing_markers_left(text: str, index: int, *, floor: int = 0
         if probe - len(marker) >= floor and text[probe - len(marker) : probe] == marker:
             return probe - len(marker)
     return index
+
+
+def _strip_markdown_boundary_markers(value: str) -> str:
+    text = re.sub(r"\s+", " ", value or "").strip()
+    for marker in ("**", "__", "*", "_", "`"):
+        while text.startswith(marker):
+            text = text[len(marker):].lstrip()
+        while text.endswith(marker):
+            text = text[: -len(marker)].rstrip()
+    return text.strip()
 
 
 def _right_boundary_after_cluster(text: str, cluster_end: int) -> int:

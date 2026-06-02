@@ -575,6 +575,40 @@ class DocumentEvidenceSummary(BaseModel):
     unresolved_ratio: float = 0.0
 
 
+class ReviewQueueItem(BaseModel):
+    citation_id: str
+    cited_text: str = ""
+    citation_label: Optional[str] = None
+    source_title: str = ""
+    source_url: Optional[str] = None
+    terminal_class: TerminalClass = TerminalClass.UNRESOLVED
+    short_explanation: str = ""
+    terminal_reason: str = ""
+    unresolved_reason: Optional[UnresolvedReason] = None
+
+
+class ReviewQueueGroup(BaseModel):
+    group_id: str
+    label: str
+    terminal_class: Optional[TerminalClass] = None
+    unresolved_reason: Optional[UnresolvedReason] = None
+    default_collapsed: bool = True
+    items: List[ReviewQueueItem] = Field(default_factory=list)
+
+
+class ReviewQueue(BaseModel):
+    needs_review: List[ReviewQueueItem] = Field(default_factory=list)
+    verified_fact: ReviewQueueGroup = Field(
+        default_factory=lambda: ReviewQueueGroup(
+            group_id="verified_fact",
+            label="事实来源",
+            terminal_class=TerminalClass.FACT,
+            default_collapsed=True,
+        )
+    )
+    unresolved: List[ReviewQueueGroup] = Field(default_factory=list)
+
+
 class DocumentEvidenceGraphNode(BaseModel):
     id: str
     type: str
@@ -610,6 +644,7 @@ class AnalysisResult(BaseModel):
     evidence_graphs: List[EvidenceGraph] = Field(default_factory=list)
     citation_terminal_results: List[CitationTerminalResult] = Field(default_factory=list)
     document_evidence_summary: DocumentEvidenceSummary = Field(default_factory=DocumentEvidenceSummary)
+    review_queue: ReviewQueue = Field(default_factory=ReviewQueue)
     document_evidence_graph: DocumentEvidenceGraph = Field(default_factory=DocumentEvidenceGraph)
     problematic_citations: List[ClaimReviewItem] = Field(default_factory=list)
     audit_limited_citations: List[ClaimReviewItem] = Field(default_factory=list)

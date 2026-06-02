@@ -37,6 +37,7 @@ from .providers.llm_provider import (
 )
 from .providers.search_provider import DuckDuckGoSearchProvider, SearchProvider
 from .ratio_reporter import RatioReporter
+from .review_queue_builder import build_review_queue
 from .schemas import (
     AnalysisRequest,
     AnalysisResult,
@@ -499,6 +500,7 @@ class SourceGroundingAnalyzer:
             max_terminal_trace_depth=request.max_terminal_trace_depth,
         )
         document_evidence_summary = build_document_evidence_summary(citation_terminal_results)
+        review_queue = build_review_queue(citation_terminal_results)
         document_evidence_graph = build_document_evidence_graph(citation_terminal_results)
         summary = self.reporter.build_summary(claims, display_citations=display_citations)
         summary.ratios_basis = (
@@ -548,6 +550,7 @@ class SourceGroundingAnalyzer:
             evidence_graphs=evidence_graphs,
             citation_terminal_results=citation_terminal_results,
             document_evidence_summary=document_evidence_summary,
+            review_queue=review_queue,
             document_evidence_graph=document_evidence_graph,
             problematic_citations=problematic_citations,
             audit_limited_citations=audit_limited_citations,

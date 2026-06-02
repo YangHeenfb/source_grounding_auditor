@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from app.document_evidence_graph_builder import build_document_evidence_graph
+from app.review_queue_builder import build_review_queue
 from app.terminal_classifier import (
     build_document_evidence_summary,
     classify_claim_terminal,
@@ -218,29 +219,74 @@ def test_summary_pie_ratios_exclude_mismatch():
     assert summary.unresolved_ratio == 0.3333
 
 
-def test_document_graph_merges_same_source_and_counts_edges():
+def test_review_queue_defaults_to_mismatch_and_opinion_only():
+    results = [
+        terminal(make_claim(claim_id="c001"), DisplayStatus.VERIFIED_FACT_SUPPORT, {"s001": source()}),
+        terminal(
+            make_claim(claim_id="c002", relation=SupportRelation.BACKGROUND_ONLY, scope=SupportScope.PREMISE_SUPPORT_FOR_ANALYSIS, claim_type=ClaimType.JUDGMENT),
+            DisplayStatus.ANALYSIS_FROM_SOURCED_PREMISES,
+            {"s001": source(source_type=SourceType.OPINION_ANALYSIS)},
+        ),
+        terminal(
+            make_claim(claim_id="c003", relation=SupportRelation.INACCESSIBLE, bucket=FinalGroundingBucket.UNVERIFIABLE_OR_MISMATCH),
+            DisplayStatus.AUDIT_LIMITED,
+            {"s001": source(text="")},
+        ),
+        terminal(
+            make_claim(claim_id="c004", relation=SupportRelation.NO_SUPPORT, bucket=FinalGroundingBucket.UNVERIFIABLE_OR_MISMATCH),
+            DisplayStatus.TRUE_CITATION_PROBLEM,
+            {"s001": source()},
+        ),
+    ]
+
+    queue = build_review_queue(results)
+
+    assert [item.terminal_class for item in queue.needs_review] == [
+        TerminalClass.MISMATCH,
+        TerminalClass.OPINION,
+    ]
+    assert all("测试引用陈述" in item.cited_text for item in queue.needs_review)
+    assert [item.terminal_class for item in queue.verified_fact.items] == [TerminalClass.FACT]
+    assert queue.verified_fact.default_collapsed is True
+    assert queue.unresolved[0].unresolved_reason == UnresolvedReason.SOURCE_BODY_MISSING
+
+
+def test_document_graph_is_claim_terminal_tree_with_cited_statement_nodes():
     c1 = make_claim(claim_id="c001")
     c2 = make_claim(claim_id="c002")
     results = [
         terminal(c1, DisplayStatus.VERIFIED_FACT_SUPPORT, {"s001": source()}),
-        terminal(c2, DisplayStatus.VERIFIED_FACT_SUPPORT, {"s001": source()}),
+        terminal(
+            c2,
+            DisplayStatus.ANALYSIS_FROM_SOURCED_PREMISES,
+            {"s001": source(source_type=SourceType.OPINION_ANALYSIS)},
+        ),
     ]
     graph = build_document_evidence_graph(results)
 
-    source_nodes = [node for node in graph.nodes if node.type == "source" and node.label == "Source s001"]
-    assert len(source_nodes) == 1
-    assert source_nodes[0].count == 2
-    assert len(source_nodes[0].metadata["cited_texts"]) == 2
-    assert any(edge.type == "points_to_source" and edge.count == 2 for edge in graph.edges)
+    statement_nodes = [node for node in graph.nodes if node.type == "cited_statement"]
+    assert len(statement_nodes) == 2
+    assert any("测试引用陈述 c001" in node.label for node in statement_nodes)
+    assert all(node.label != "2 条引用" for node in statement_nodes)
+    assert any(node.id == "terminal:fact" and node.metadata["default_expanded"] is False for node in graph.nodes)
+    assert any(node.id == "terminal:opinion" and node.metadata["default_expanded"] is True for node in graph.nodes)
+    assert any(edge.type == "terminal_contains_statement" for edge in graph.edges)
+    assert any(node.type == "reason" for node in graph.nodes)
 
 
 def test_default_ui_uses_terminal_pie_and_warning_badge_without_debug_tags():
     html = Path("backend/app/static/index.html").read_text()
 
     assert "引用最终落点" in html
+    assert "复核建议" in html
+    assert "需要人工复核" in html
+    assert "证据终点图" in html
     assert "terminalPie" in html
     assert "mismatchBadge" in html
     assert "legendRow('mismatch'" not in html
-    assert "点击来源或终点节点查看具体引用" in html
+    assert "查看具体引用" not in html
+    assert "聚合证据树" not in html
+    assert "共分析" not in html
+    assert "条最终落到事实来源" not in html
     assert "debug_tags" not in html
     assert "problematicCitations" not in html

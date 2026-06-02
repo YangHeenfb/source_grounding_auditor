@@ -64,7 +64,7 @@
     .reason-chip { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; border-radius: 999px; padding: 5px 9px; font-size: 12px; }
     .graph-help { margin: 0 0 12px; }
     .terminal-graph { overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 12px; background: #f8fafc; padding: 14px; }
-    .graph-columns { display: grid; grid-template-columns: 180px 210px 250px 210px; gap: 14px; min-width: 900px; }
+    .graph-columns { display: block; min-width: 780px; }
     .graph-col { display: flex; flex-direction: column; gap: 10px; }
     .graph-title { color: #64748b; font-size: 12px; font-weight: 900; letter-spacing: .04em; }
     .graph-node {
@@ -81,6 +81,31 @@
     .node-detail { margin-top: 12px; border-top: 1px solid #e2e8f0; padding-top: 12px; }
     .citation-list { margin: 8px 0 0; padding-left: 18px; }
     .citation-list li { margin: 6px 0; }
+    .review-list { display: grid; gap: 10px; margin-top: 12px; }
+    .review-card { border: 1px solid #e2e8f0; border-left-width: 5px; border-radius: 10px; padding: 12px; background: white; }
+    .review-card.mismatch { border-left-color: var(--mismatch); }
+    .review-card.opinion { border-left-color: var(--opinion); }
+    .review-card.fact { border-left-color: var(--fact); }
+    .review-card.unresolved { border-left-color: var(--unresolved); }
+    .review-meta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+    .review-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    .link-button {
+      display: inline-flex; align-items: center; border-radius: 999px; padding: 8px 11px;
+      background: #e2e8f0; color: #111827; text-decoration: none; font-size: 13px; font-weight: 800;
+    }
+    .tree-group { border: 1px solid #e2e8f0; border-radius: 12px; background: white; padding: 10px 12px; margin-top: 10px; }
+    .tree-row { display: grid; grid-template-columns: minmax(220px, 1.4fr) minmax(180px, .9fr) minmax(180px, 1fr); gap: 10px; padding: 10px 0; border-top: 1px solid #eef2f7; }
+    .tree-cell { border-radius: 10px; padding: 10px; background: #f8fafc; border: 1px solid #e2e8f0; }
+    .tree-cell.statement { font-weight: 800; }
+    .tree-cell.reason.terminal_fact { border-color: #86efac; }
+    .tree-cell.reason.terminal_opinion { border-color: #fdba74; }
+    .tree-cell.reason.terminal_unresolved { border-color: #cbd5e1; }
+    .tree-cell.reason.terminal_mismatch { border-color: #fca5a5; }
+    .tree-cell.reason.fact { border-color: #86efac; }
+    .tree-cell.reason.opinion { border-color: #fdba74; }
+    .tree-cell.reason.unresolved { border-color: #cbd5e1; }
+    .tree-cell.reason.mismatch { border-color: #fca5a5; }
+    .hidden-row { display: none; }
     details { margin-top: 16px; }
     summary { cursor: pointer; font-weight: 900; }
     .terminal-list { display: grid; gap: 10px; margin-top: 12px; }
@@ -127,7 +152,7 @@
     </section>
 
     <section id="results" style="display:none">
-      <h2>结论</h2>
+      <h2>复核建议</h2>
       <div class="result-grid">
         <section class="card">
           <p id="terminalSummaryLine" class="summary-line"></p>
@@ -143,18 +168,25 @@
         </section>
       </div>
 
-      <h2>聚合证据树</h2>
+      <h2>需要人工复核</h2>
+      <p class="muted graph-help">默认只展示引用不对应和观点终点。事实终点与无法审计放在下方折叠区。</p>
+      <div id="reviewQueue" class="review-list"></div>
+
+      <details id="factReviewGroup">
+        <summary>事实来源</summary>
+        <div id="verifiedFactList" class="review-list"></div>
+      </details>
+
+      <details id="unresolvedReviewGroup">
+        <summary>无法审计</summary>
+        <div id="unresolvedList" class="review-list"></div>
+      </details>
+
+      <h2>证据终点图</h2>
       <p class="muted graph-help">绿色代表最终落到事实来源。橙色代表最终停在观点或分析来源。灰色代表本轮无法审计。红色只表示引用与陈述不对应，不代表观点一定错误。</p>
       <div class="terminal-graph">
         <div id="documentGraph" class="graph-columns"></div>
-        <div id="documentEdges" class="edge-list"></div>
-        <div id="nodeDetail" class="node-detail muted">点击来源或终点节点查看具体引用。</div>
       </div>
-
-      <details>
-        <summary>查看具体引用</summary>
-        <div id="terminalResultList" class="terminal-list"></div>
-      </details>
 
       <details>
         <summary>高级调试信息</summary>
@@ -228,21 +260,33 @@ function render(result) {
   document.getElementById('results').style.display = 'block';
   const summary = result.document_evidence_summary || {};
   const terminalResults = result.citation_terminal_results || [];
+  const reviewQueue = result.review_queue || buildReviewQueue(terminalResults);
   renderSummary(summary, terminalResults);
   renderPie(summary);
+  renderReviewQueue(reviewQueue);
   renderDocumentGraph(result.document_evidence_graph || { nodes: [], edges: [] });
-  renderTerminalResultList(terminalResults);
   renderAdvancedDebug(result);
 }
 
 function renderSummary(summary, terminalResults = []) {
-  const total = summary.total_cited_statements || 0;
   const fact = summary.fact_terminal_count || 0;
   const opinion = summary.opinion_terminal_count || 0;
   const unresolved = summary.unresolved_terminal_count || 0;
   const mismatch = summary.mismatch_count || 0;
-  document.getElementById('terminalSummaryLine').textContent =
-    `共分析 ${total} 条带引用陈述：${fact} 条最终落到事实来源，${opinion} 条停在观点或分析来源，${unresolved} 条本轮无法审计。`;
+  let message = '';
+  if (mismatch > 0) {
+    message = `发现 ${mismatch} 条引用不对应，建议优先复核。其次查看观点终点，因为这些内容最终停在分析或判断来源。`;
+  } else if (opinion > 0) {
+    message = '未发现明确引用不对应。建议复核观点终点，因为这些内容最终停在分析或判断来源。';
+  } else if (fact > 0) {
+    message = '已标注 citation 大多落到事实来源。你可以展开事实来源查看对应 claim。';
+  } else {
+    message = '未找到需要进入终点审计的 citation。';
+  }
+  if (unresolved > 0) {
+    message += ' 无法审计表示缺少 URL、抓取失败或没有证据片段，不代表内容错误。';
+  }
+  document.getElementById('terminalSummaryLine').textContent = message;
   const badge = document.getElementById('mismatchBadge');
   badge.textContent = `引用不对应 ${mismatch} 条`;
   badge.style.display = mismatch ? 'inline-flex' : 'none';
@@ -287,81 +331,137 @@ function legendRow(kind, label, count, ratio) {
   return `<div class="legend-row"><span class="legend-label"><span class="dot ${kind}"></span>${escapeHtml(label)}</span><strong>${count} · ${pct(ratio)}</strong></div>`;
 }
 
+function buildReviewQueue(results) {
+  const needs = (results || [])
+    .filter(item => item.terminal_class === 'mismatch' || item.terminal_class === 'opinion')
+    .sort((a, b) => (a.terminal_class === b.terminal_class ? 0 : a.terminal_class === 'mismatch' ? -1 : 1));
+  const facts = (results || []).filter(item => item.terminal_class === 'fact');
+  const unresolvedGroups = new Map();
+  (results || []).filter(item => item.terminal_class === 'unresolved').forEach(item => {
+    const reason = item.unresolved_reason || 'terminal_mapping_missing';
+    if (!unresolvedGroups.has(reason)) {
+      unresolvedGroups.set(reason, {
+        group_id: `unresolved:${reason}`,
+        label: unresolvedReasonLabels[reason] || reason,
+        items: []
+      });
+    }
+    unresolvedGroups.get(reason).items.push(item);
+  });
+  return {
+    needs_review: needs,
+    verified_fact: { group_id: 'verified_fact', label: '事实来源', items: facts },
+    unresolved: Array.from(unresolvedGroups.values())
+  };
+}
+
+function renderReviewQueue(queue) {
+  const needs = queue.needs_review || [];
+  document.getElementById('reviewQueue').innerHTML = needs.length
+    ? needs.map(renderReviewItem).join('')
+    : '<section class="card muted">未发现引用不对应或观点终点。可以展开事实来源和无法审计分组查看细节。</section>';
+
+  const facts = queue.verified_fact?.items || [];
+  document.querySelector('#factReviewGroup summary').textContent = `事实来源 ${facts.length} 条`;
+  document.getElementById('verifiedFactList').innerHTML = facts.length
+    ? facts.map(renderReviewItem).join('')
+    : '<p class="muted">没有事实终点。</p>';
+
+  const unresolvedGroups = queue.unresolved || [];
+  const unresolvedCount = unresolvedGroups.reduce((sum, group) => sum + (group.items || []).length, 0);
+  document.querySelector('#unresolvedReviewGroup summary').textContent = `无法审计 ${unresolvedCount} 条`;
+  document.getElementById('unresolvedList').innerHTML = unresolvedGroups.length
+    ? unresolvedGroups.map(group => `
+      <details class="tree-group">
+        <summary>${escapeHtml(group.label)} ${(group.items || []).length} 条</summary>
+        <div class="review-list">${(group.items || []).map(renderReviewItem).join('')}</div>
+      </details>
+    `).join('')
+    : '<p class="muted">没有无法审计的引用。</p>';
+
+  document.querySelectorAll('[data-focus-citation]').forEach(button => {
+    button.addEventListener('click', () => focusEvidencePath(button.dataset.focusCitation));
+  });
+}
+
+function renderReviewItem(item) {
+  const kind = item.terminal_class || 'unresolved';
+  const source = item.source_title || item.source_url || '未解析来源';
+  const reason = item.unresolved_reason
+    ? (unresolvedReasonLabels[item.unresolved_reason] || item.unresolved_reason)
+    : (item.terminal_reason || item.short_explanation || '');
+  const label = item.citation_label ? `[${item.citation_label}]` : 'citation';
+  return `<article class="review-card ${escapeHtml(kind)}">
+    <strong>${escapeHtml(terminalLabels[kind] || kind)} · ${escapeHtml(label)}</strong>
+    <p>${escapeHtml(item.cited_text || '')}</p>
+    <div class="review-meta muted small"><span>${escapeHtml(source)}</span><span>${escapeHtml(reason)}</span></div>
+    <div class="review-actions">
+      ${item.source_url ? `<a class="link-button" href="${escapeHtml(item.source_url)}" target="_blank" rel="noreferrer">查看来源</a>` : ''}
+      <button type="button" class="secondary" data-focus-citation="${escapeHtml(item.citation_id)}">展开证据链</button>
+    </div>
+  </article>`;
+}
+
 function renderDocumentGraph(graph) {
   const nodes = graph.nodes || [];
   const edges = graph.edges || [];
-  const columns = [
-    ['document', '文档'],
-    ['citation_group', '引用分组'],
-    ['source', '来源'],
-    ['terminal', '最终落点']
-  ];
-  const nodesByColumn = new Map(columns.map(([key]) => [key, []]));
-  nodes.forEach(node => {
-    const key = node.type && node.type.startsWith('terminal_') ? 'terminal' : node.type;
-    if (!nodesByColumn.has(key)) nodesByColumn.set(key, []);
-    nodesByColumn.get(key).push(node);
-  });
-  document.getElementById('documentGraph').innerHTML = columns.map(([key, title]) => `
-    <section class="graph-col">
-      <div class="graph-title">${escapeHtml(title)}</div>
-      ${(nodesByColumn.get(key) || []).map(renderGraphNode).join('') || '<div class="muted small">-</div>'}
-    </section>
-  `).join('');
-  document.querySelectorAll('.graph-node').forEach((button) => {
+  const byId = new Map(nodes.map(node => [node.id, node]));
+  const terminalOrder = ['terminal:mismatch', 'terminal:opinion', 'terminal:fact', 'terminal:unresolved'];
+  const groups = terminalOrder.map(id => byId.get(id)).filter(Boolean);
+  document.getElementById('documentGraph').innerHTML = groups.length
+    ? groups.map(group => renderTerminalTreeGroup(group, edges, byId)).join('')
+    : '<p class="muted">没有证据终点图。</p>';
+  document.querySelectorAll('[data-show-tree-group]').forEach(button => {
     button.addEventListener('click', () => {
-      const node = nodes.find((item) => item.id === button.dataset.nodeId);
-      renderNodeDetail(node);
+      document.querySelectorAll(`[data-tree-extra="${button.dataset.showTreeGroup}"]`).forEach(row => row.classList.remove('hidden-row'));
+      button.remove();
     });
   });
-  document.getElementById('documentEdges').innerHTML = edges.map(edge =>
-    `<span class="edge-chip">${escapeHtml(edgeLabel(edge))} · ${edge.count}</span>`
-  ).join('');
-}
-function renderGraphNode(node) {
-  const nodeClass = node.type || '';
-  const count = Number.isFinite(node.count) ? node.count : 0;
-  return `<button type="button" class="graph-node ${escapeHtml(nodeClass)}" data-node-id="${escapeHtml(node.id)}">
-    ${escapeHtml(node.label)}<span>${count} 条引用</span>
-  </button>`;
-}
-function edgeLabel(edge) {
-  const map = {
-    cites: '引用',
-    points_to_source: '指向来源',
-    source_cites_upstream: '上游来源',
-    lands_on_fact: '落到事实',
-    lands_on_opinion: '落到观点',
-    unresolved: '无法审计',
-    mismatch: '引用错配'
-  };
-  return edge.label || map[edge.type] || edge.type || '';
-}
-function renderNodeDetail(node) {
-  const detail = document.getElementById('nodeDetail');
-  if (!node) {
-    detail.textContent = '没有节点详情。';
-    return;
-  }
-  const texts = node.metadata?.cited_texts || [];
-  detail.className = 'node-detail';
-  detail.innerHTML = `<strong>${escapeHtml(node.label)}</strong><p class="muted small">${escapeHtml(node.type)} · ${node.count || 0} 条引用</p>${
-    texts.length
-      ? `<ol class="citation-list">${texts.map(text => `<li>${escapeHtml(text)}</li>`).join('')}</ol>`
-      : '<p class="muted">该节点没有具体引用列表。</p>'
-  }`;
 }
 
-function renderTerminalResultList(results) {
-  document.getElementById('terminalResultList').innerHTML = results.length ? results.map(result => `
-    <article class="terminal-item">
-      <strong>${escapeHtml(terminalLabels[result.terminal_class] || result.terminal_class)}</strong>
-      <p>${escapeHtml(result.cited_text)}</p>
-      <p class="muted small">${escapeHtml(result.source_title || result.source_url || '未解析来源')} · ${escapeHtml(result.short_explanation || '')}${
-        result.unresolved_reason ? ` · 原因：${escapeHtml(unresolvedReasonLabels[result.unresolved_reason] || result.unresolved_reason)}` : ''
-      }</p>
-    </article>
-  `).join('') : '<p class="muted">没有带引用的陈述。</p>';
+function renderTerminalTreeGroup(group, edges, byId) {
+  const rows = edges
+    .filter(edge => edge.source === group.id && edge.type === 'terminal_contains_statement')
+    .map(edge => buildTreeRow(edge.target, edges, byId))
+    .filter(Boolean);
+  const open = group.metadata?.default_expanded ? ' open' : '';
+  return `<details class="tree-group"${open}>
+    <summary>${escapeHtml(group.label)} ${rows.length} 条</summary>
+    <div class="tree-items">
+      ${rows.map((row, index) => renderTreeRow(row, group.id, index)).join('')}
+      ${rows.length > 5 ? `<button type="button" class="secondary" data-show-tree-group="${escapeHtml(group.id)}">展开全部</button>` : ''}
+    </div>
+  </details>`;
+}
+
+function buildTreeRow(statementId, edges, byId) {
+  const statement = byId.get(statementId);
+  if (!statement) return null;
+  const sourceEdge = edges.find(edge => edge.source === statementId && edge.type === 'points_to_source');
+  const source = sourceEdge ? byId.get(sourceEdge.target) : null;
+  const reasonEdge = source ? edges.find(edge => edge.source === source.id) : null;
+  const reason = reasonEdge ? byId.get(reasonEdge.target) : null;
+  return { statement, source, reason };
+}
+
+function renderTreeRow(row, groupId, index) {
+  const hiddenClass = index >= 5 ? ' hidden-row' : '';
+  const hiddenAttr = index >= 5 ? ` data-tree-extra="${escapeHtml(groupId)}"` : '';
+  const sourceUrl = row.source?.metadata?.source_url || '';
+  return `<div class="tree-row${hiddenClass}"${hiddenAttr} id="tree-${escapeHtml(row.statement.metadata?.citation_label || row.statement.id)}" data-citation-id="${escapeHtml(row.statement.id.replace('statement:', ''))}">
+    <div class="tree-cell statement">${escapeHtml(row.statement.label)}<div class="muted small">${escapeHtml(row.statement.metadata?.citation_label ? `[${row.statement.metadata.citation_label}]` : '')}</div></div>
+    <div class="tree-cell source">${sourceUrl ? `<a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer">${escapeHtml(row.source?.label || '来源')}</a>` : escapeHtml(row.source?.label || '未解析来源')}</div>
+    <div class="tree-cell reason ${escapeHtml(row.reason?.terminal_class || '')} ${escapeHtml(row.reason?.type || '')}">${escapeHtml(row.reason?.label || '')}</div>
+  </div>`;
+}
+
+function focusEvidencePath(citationId) {
+  const target = Array.from(document.querySelectorAll('[data-citation-id]')).find(node => node.dataset.citationId === citationId);
+  if (!target) return;
+  const parent = target.closest('details');
+  if (parent) parent.open = true;
+  target.classList.remove('hidden-row');
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 function renderAdvancedDebug(result) {

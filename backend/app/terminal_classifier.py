@@ -8,10 +8,12 @@ from .schemas import (
     AccessStatus,
     CitationTerminalResult,
     Claim,
+    ClaimSourceComparison,
     ClaimType,
     DisplayCitationResult,
     DisplayStatus,
     DocumentEvidenceSummary,
+    EvidenceExcerpt,
     RiskFlag,
     Source,
     SourceRole,
@@ -103,6 +105,27 @@ def classify_claim_terminal(
         path_edges,
         max_terminal_trace_depth=max_terminal_trace_depth,
     )
+    excerpts = _evidence_excerpts_for_claim(claim, primary_source)
+    best_excerpt = excerpts[0] if excerpts else None
+    if best_excerpt:
+        evidence_node_id = f"evidence:{claim.claim_id}:1"
+        path_nodes.append(
+            {
+                "id": evidence_node_id,
+                "type": "evidence",
+                "label": best_excerpt.text,
+                "source_id": best_excerpt.source_id,
+                "excerpt_role": best_excerpt.excerpt_role,
+            }
+        )
+        path_edges.append(
+            {
+                "source": _last_source_node_id(path_nodes),
+                "target": evidence_node_id,
+                "type": "source_has_evidence",
+                "label": "来源片段",
+            }
+        )
     path_nodes.append(
         {
             "id": f"terminal:{terminal_class.value}",
@@ -134,6 +157,16 @@ def classify_claim_terminal(
         short_explanation=_short_explanation(terminal_class, reason),
         debug_claim_ids=[claim.claim_id],
         debug_tags=_dedupe((display.debug_tags if display else []) + _terminal_debug_tags(claim)),
+        best_evidence_excerpt=best_excerpt,
+        evidence_excerpts=excerpts,
+        claim_source_comparison=_claim_source_comparison(
+            claim=claim,
+            terminal_class=terminal_class,
+            terminal_reason=reason,
+            unresolved_reason=unresolved_reason,
+            source=primary_source,
+            best_excerpt=best_excerpt,
+        ),
     )
 
 
@@ -317,6 +350,132 @@ def _primary_source_for_claim(claim: Claim, sources_by_id: dict[str, Source]) ->
         if source_id in sources_by_id:
             return sources_by_id[source_id]
     return None
+
+
+def _evidence_excerpts_for_claim(claim: Claim, source: Source | None) -> list[EvidenceExcerpt]:
+    excerpts = list(claim.evidence_excerpts)
+    for edge in claim.evidence_chain:
+        excerpts.extend(edge.evidence_excerpts)
+        if edge.best_evidence_excerpt:
+            excerpts.append(edge.best_evidence_excerpt)
+    if not excerpts and claim.evidence_quote:
+        excerpts.append(
+            EvidenceExcerpt(
+                excerpt_id=f"{claim.claim_id}:quote:1",
+                source_id=source.source_id if source else claim.citation_source_id,
+                source_title=(source.title if source else claim.citation_source_title) or "",
+                source_url=(source.url if source else claim.citation_source_url),
+                text=claim.evidence_quote,
+                excerpt_role=_excerpt_role_from_claim(claim),
+                selection_method="llm_selected",
+                confidence="medium",
+                explanation="Evidence quote selected during source support checking.",
+            )
+        )
+    deduped: list[EvidenceExcerpt] = []
+    seen: set[str] = set()
+    for excerpt in excerpts:
+        key = " ".join((excerpt.text or "").split())
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(excerpt)
+        if len(deduped) >= 3:
+            break
+    return deduped
+
+
+def _excerpt_role_from_claim(claim: Claim) -> str:
+    if claim.support_relation == SupportRelation.DIRECTLY_SUPPORTS:
+        return "direct_support"
+    if claim.support_scope == SupportScope.PREMISE_SUPPORT_FOR_ANALYSIS:
+        return "fact_premise_support"
+    if claim.support_relation in {SupportRelation.PARTIALLY_SUPPORTS, SupportRelation.SUPPORTS_WEAKER_CLAIM}:
+        return "partial_or_nuanced_support"
+    if claim.support_relation == SupportRelation.OPINION_ONLY:
+        return "opinion_statement"
+    if claim.support_relation == SupportRelation.CONTRADICTS:
+        return "contradicting_excerpt"
+    return "closest_available_context"
+
+
+def _claim_source_comparison(
+    *,
+    claim: Claim,
+    terminal_class: TerminalClass,
+    terminal_reason: str,
+    unresolved_reason: UnresolvedReason | None,
+    source: Source | None,
+    best_excerpt: EvidenceExcerpt | None,
+) -> ClaimSourceComparison:
+    claim_text = display_claim_text_for_claim(claim)
+    source_text = best_excerpt.text if best_excerpt else ""
+    if terminal_class == TerminalClass.FACT:
+        return ClaimSourceComparison(
+            claim_says=claim_text,
+            source_says=source_text,
+            comparison_label="supports",
+            gap="source 直接或充分支持该 cited statement。",
+        )
+    if terminal_class == TerminalClass.OPINION:
+        if best_excerpt and best_excerpt.excerpt_role in {"fact_premise_support", "direct_support", "partial_or_nuanced_support"}:
+            return ClaimSourceComparison(
+                claim_says=claim_text,
+                source_says=source_text,
+                comparison_label="supports_fact_premise",
+                gap="source 支持事实前提，但 cited statement 包含作者的分析、判断或建议。",
+            )
+        return ClaimSourceComparison(
+            claim_says=claim_text,
+            source_says=source_text,
+            comparison_label="opinion_only",
+            gap="source 本身是观点或分析，不是事实性来源。",
+        )
+    if terminal_class == TerminalClass.MISMATCH:
+        if claim.support_relation == SupportRelation.CONTRADICTS or (best_excerpt and best_excerpt.excerpt_role == "contradicting_excerpt"):
+            return ClaimSourceComparison(
+                claim_says=claim_text,
+                source_says=source_text,
+                comparison_label="contradicts",
+                gap="source 片段与 cited statement 存在矛盾。",
+            )
+        if best_excerpt:
+            return ClaimSourceComparison(
+                claim_says=claim_text,
+                source_says=source_text,
+                comparison_label="weaker_than_claim",
+                gap="source 片段没有支持 cited statement，或只支持较弱版本。",
+            )
+        return ClaimSourceComparison(
+            claim_says=claim_text,
+            source_says="",
+            comparison_label="no_relevant_excerpt",
+            gap="source 可访问，但没有找到能支撑该句的片段。",
+        )
+    if unresolved_reason == UnresolvedReason.NO_RELEVANT_SNIPPET:
+        return ClaimSourceComparison(
+            claim_says=claim_text,
+            source_says="",
+            comparison_label="no_relevant_excerpt",
+            gap="source 可访问，但当前没有找到能对应该 cited statement 的片段。",
+        )
+    if source is None or unresolved_reason in {
+        UnresolvedReason.NO_SOURCE_URL,
+        UnresolvedReason.SOURCE_FETCH_FAILED,
+        UnresolvedReason.SOURCE_BODY_MISSING,
+    }:
+        return ClaimSourceComparison(
+            claim_says=claim_text,
+            source_says="",
+            comparison_label="source_unavailable",
+            gap="source body 不可用，无法显示对应片段。",
+        )
+    return ClaimSourceComparison(
+        claim_says=claim_text,
+        source_says=source_text,
+        comparison_label="source_unavailable" if not source_text else "no_relevant_excerpt",
+        gap=f"无法生成 claim/source 对比。terminal reason: {terminal_reason}",
+    )
 
 
 def _claim_has_fact_source_support(claim: Claim, source: Source | None) -> bool:

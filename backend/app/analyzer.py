@@ -777,7 +777,6 @@ def _apply_claim_aware_source_role(claim: Claim, source: Source, edge: Any) -> N
     edge.source_role_basis = result.basis
     if (
         result.support_scope.value == "premise_support_for_analysis"
-        and claim.claim_type == ClaimType.JUDGMENT
         and edge.support_relation == SupportRelation.DIRECTLY_SUPPORTS
     ):
         edge.support_relation = SupportRelation.PARTIALLY_SUPPORTS

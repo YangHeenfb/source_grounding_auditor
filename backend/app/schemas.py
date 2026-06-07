@@ -355,6 +355,8 @@ class EvidenceEdge(BaseModel):
     source_to_claim_relation: SourceToClaimRelation = SourceToClaimRelation.UNKNOWN
     support_scope: SupportScope = SupportScope.UNKNOWN
     source_role_basis: List[str] = Field(default_factory=list)
+    best_evidence_excerpt: Optional["EvidenceExcerpt"] = None
+    evidence_excerpts: List["EvidenceExcerpt"] = Field(default_factory=list)
 
 
 class Claim(BaseModel):
@@ -395,6 +397,8 @@ class Claim(BaseModel):
     cited_statement_id: Optional[str] = None
     citation_edge_id: Optional[str] = None
     citation_edges: List[CitationEdge] = Field(default_factory=list)
+    best_evidence_excerpt: Optional["EvidenceExcerpt"] = None
+    evidence_excerpts: List["EvidenceExcerpt"] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod
@@ -547,6 +551,28 @@ class EvidenceGraph(BaseModel):
     edges: List[EvidenceGraphEdge] = Field(default_factory=list)
 
 
+class EvidenceExcerpt(BaseModel):
+    excerpt_id: str
+    source_id: Optional[str] = None
+    source_title: str = ""
+    source_url: Optional[str] = None
+    text: str
+    text_translated_or_summarized: str = ""
+    char_start: Optional[int] = None
+    char_end: Optional[int] = None
+    excerpt_role: str = "closest_available_context"
+    selection_method: str = "lexical_retrieval"
+    confidence: str = "medium"
+    explanation: str = ""
+
+
+class ClaimSourceComparison(BaseModel):
+    claim_says: str = ""
+    source_says: str = ""
+    gap: str = ""
+    comparison_label: str = "source_unavailable"
+
+
 class CitationTerminalResult(BaseModel):
     citation_id: str
     cited_text: str = ""
@@ -562,6 +588,9 @@ class CitationTerminalResult(BaseModel):
     short_explanation: str = ""
     debug_claim_ids: List[str] = Field(default_factory=list)
     debug_tags: List[str] = Field(default_factory=list)
+    best_evidence_excerpt: Optional[EvidenceExcerpt] = None
+    evidence_excerpts: List[EvidenceExcerpt] = Field(default_factory=list)
+    claim_source_comparison: Optional[ClaimSourceComparison] = None
 
 
 class DocumentEvidenceSummary(BaseModel):
@@ -585,6 +614,9 @@ class ReviewQueueItem(BaseModel):
     short_explanation: str = ""
     terminal_reason: str = ""
     unresolved_reason: Optional[UnresolvedReason] = None
+    best_evidence_excerpt: Optional[EvidenceExcerpt] = None
+    evidence_excerpts: List[EvidenceExcerpt] = Field(default_factory=list)
+    claim_source_comparison: Optional[ClaimSourceComparison] = None
 
 
 class ReviewQueueGroup(BaseModel):

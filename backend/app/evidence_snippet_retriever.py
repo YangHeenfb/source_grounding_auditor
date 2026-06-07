@@ -299,6 +299,15 @@ def _sentences(text: str) -> list[str]:
                     expanded.append(chunk)
                 if start + window >= len(words):
                     break
+        elif len(piece) > 700:
+            window_chars = 360
+            stride_chars = 180
+            for start in range(0, len(piece), stride_chars):
+                chunk = piece[start : start + window_chars].strip()
+                if chunk:
+                    expanded.append(chunk)
+                if start + window_chars >= len(piece):
+                    break
         else:
             expanded.append(piece)
     return [piece for piece in expanded if piece]
@@ -365,6 +374,41 @@ def _contentful_sentence(sentence: str) -> bool:
         "financial tools",
         "learn about tax-advantaged",
         "take this month",
+        "微信扫一扫",
+        "复制链接",
+        "我的收藏",
+        "本页目录",
+        "版权所有",
+        "售前咨询",
+        "售后服务",
+        "工单提交",
+        "建议反馈",
+        "待支付订单",
+        "待续费产品",
+        "最近搜索",
+        "热门搜索",
+        "文档反馈官",
+        "文档活动",
+        "上一篇",
+        "下一篇",
+        "全部产品",
+        "搜索本产品",
+        "检测到您已登录",
+        "国际站账号",
+        "mainBtnText",
+        "productIcon",
+        "res-static",
+        "设为首页",
+        "加入收藏",
+        "当前位置",
+        "【打印】",
+        "【纠错】",
+        "服务声明",
+        "产品动态",
+        "新手指引",
+        "新手入门",
+        "操作导航",
+        "DeepSeek",
     }
     return not any(needle in lowered for needle in noisy)
 
@@ -380,7 +424,7 @@ def _title_like_sentence(sentence: str, source_title: str) -> bool:
         return True
     title_words = {word for word in title_norm.split() if len(word) > 2}
     sentence_words = sentence_norm.split()
-    if len(sentence_words) <= 8 and title_words and title_words.issubset(set(sentence_words)):
+    if len(sentence_words) <= 8 and len(title_words) >= 2 and title_words.issubset(set(sentence_words)):
         return True
     return False
 
@@ -396,6 +440,7 @@ def _features(text: str) -> dict[str, set[str]]:
         if item.strip()
     }
     cjk = {item for item in CJK_TOKEN_RE.findall(text or "") if len(item) >= 2}
+    cjk_grams = _cjk_ngrams(text or "")
     stopwords = {
         "the",
         "and",
@@ -416,6 +461,7 @@ def _features(text: str) -> dict[str, set[str]]:
     }
     tokens = {token for token in latin if token not in stopwords}
     tokens.update(cjk)
+    tokens.update(cjk_grams)
     themes = _themes(normalized_lower)
     phrases = _phrases(normalized_lower)
     holdings_intent = _has_any(normalized_lower, {"前十大", "持仓", "权重", "合计", "接近", "集中度", "top holdings", "holdings", "weight"})
@@ -459,6 +505,38 @@ def _themes(text: str) -> set[str]:
 
 def _phrases(text: str) -> set[str]:
     return {phrase for phrase in SEMANTIC_PHRASES if phrase in text}
+
+
+def _cjk_ngrams(text: str) -> set[str]:
+    grams: set[str] = set()
+    for run in CJK_TOKEN_RE.findall(text or ""):
+        if len(run) < 2:
+            continue
+        for size in (2, 3, 4):
+            if len(run) < size:
+                continue
+            for index in range(0, len(run) - size + 1):
+                grams.add(run[index : index + size])
+    noisy = {
+        "腾讯",
+        "腾讯云",
+        "华为",
+        "华为云",
+        "阿里",
+        "阿里云",
+        "产品",
+        "服务",
+        "文档",
+        "说明",
+        "官方",
+        "页面",
+        "可以",
+        "通过",
+        "查看",
+        "搜索",
+        "中心",
+    }
+    return {gram for gram in grams if gram not in noisy}
 
 
 def _has_any(text: str, needles: set[str]) -> bool:

@@ -89,14 +89,28 @@
     .review-card.unresolved { border-left-color: var(--unresolved); }
     .review-meta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
     .review-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    .comparison-grid { display: grid; gap: 10px; margin-top: 10px; }
+    .comparison-block { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px; }
+    .comparison-label { display: block; font-size: 12px; color: #64748b; font-weight: 900; margin-bottom: 5px; }
+    .source-quote {
+      margin: 0; padding: 10px 12px; background: white; border-left: 4px solid #cbd5e1;
+      color: #172033; border-radius: 8px; line-height: 1.55; white-space: pre-wrap;
+    }
+    .review-card.opinion .source-quote { border-left-color: var(--opinion); }
+    .review-card.mismatch .source-quote { border-left-color: var(--mismatch); }
+    .review-card.fact .source-quote { border-left-color: var(--fact); }
+    .review-card.unresolved .source-quote { border-left-color: var(--unresolved); }
+    .comparison-gap { margin: 0; line-height: 1.55; }
     .link-button {
       display: inline-flex; align-items: center; border-radius: 999px; padding: 8px 11px;
       background: #e2e8f0; color: #111827; text-decoration: none; font-size: 13px; font-weight: 800;
     }
     .tree-group { border: 1px solid #e2e8f0; border-radius: 12px; background: white; padding: 10px 12px; margin-top: 10px; }
+    .tree-header { display: grid; grid-template-columns: minmax(220px, 1.4fr) minmax(180px, .9fr) minmax(180px, 1fr); gap: 10px; padding: 10px 0 2px; color: #64748b; font-size: 12px; font-weight: 900; }
     .tree-row { display: grid; grid-template-columns: minmax(220px, 1.4fr) minmax(180px, .9fr) minmax(180px, 1fr); gap: 10px; padding: 10px 0; border-top: 1px solid #eef2f7; }
     .tree-cell { border-radius: 10px; padding: 10px; background: #f8fafc; border: 1px solid #e2e8f0; }
     .tree-cell.statement { font-weight: 800; }
+    .tree-cell-label { display: block; color: #64748b; font-size: 12px; font-weight: 900; margin-bottom: 5px; }
     .tree-cell.reason.terminal_fact { border-color: #86efac; }
     .tree-cell.reason.terminal_opinion { border-color: #fdba74; }
     .tree-cell.reason.terminal_unresolved { border-color: #cbd5e1; }
@@ -391,15 +405,68 @@ function renderReviewItem(item) {
     ? (unresolvedReasonLabels[item.unresolved_reason] || item.unresolved_reason)
     : (item.terminal_reason || item.short_explanation || '');
   const label = item.citation_label ? `[${item.citation_label}]` : 'citation';
+  const comparison = item.claim_source_comparison || {};
+  const excerpt = item.best_evidence_excerpt || null;
   return `<article class="review-card ${escapeHtml(kind)}">
     <strong>${escapeHtml(terminalLabels[kind] || kind)} · ${escapeHtml(label)}</strong>
-    <p>${escapeHtml(item.cited_text || '')}</p>
+    <div class="comparison-grid">
+      <div class="comparison-block">
+        <span class="comparison-label">原文 claim</span>
+        <p class="comparison-gap">${escapeHtml(comparison.claim_says || item.cited_text || '')}</p>
+      </div>
+      <div class="comparison-block">
+        <span class="comparison-label">引用来源片段</span>
+        ${renderSourceExcerpt(excerpt, comparison)}
+      </div>
+      <div class="comparison-block">
+        <span class="comparison-label">对比结论</span>
+        <p class="comparison-gap">${escapeHtml(comparison.gap || reason || '暂无对比说明。')}</p>
+      </div>
+    </div>
     <div class="review-meta muted small"><span>${escapeHtml(source)}</span><span>${escapeHtml(reason)}</span></div>
     <div class="review-actions">
       ${item.source_url ? `<a class="link-button" href="${escapeHtml(item.source_url)}" target="_blank" rel="noreferrer">查看来源</a>` : ''}
+      ${renderMoreExcerpts(item.evidence_excerpts || [], excerpt)}
       <button type="button" class="secondary" data-focus-citation="${escapeHtml(item.citation_id)}">展开证据链</button>
+      <details>
+        <summary>技术细节</summary>
+        <dl class="debug-grid">
+          <dt>terminal reason</dt><dd>${escapeHtml(item.terminal_reason || '')}</dd>
+          <dt>comparison label</dt><dd>${escapeHtml(comparison.comparison_label || '')}</dd>
+          <dt>selection method</dt><dd>${escapeHtml(excerpt?.selection_method || 'unavailable')}</dd>
+        </dl>
+      </details>
     </div>
   </article>`;
+}
+
+function renderSourceExcerpt(excerpt, comparison) {
+  const text = excerpt?.text || comparison?.source_says || '';
+  if (!text) {
+    return `<p class="muted comparison-gap">${escapeHtml(noExcerptMessage(comparison))}</p>`;
+  }
+  const clipped = text.length > 600 ? `${text.slice(0, 600)}…` : text;
+  const quote = `<blockquote class="source-quote">${escapeHtml(clipped)}</blockquote>`;
+  if (text.length <= 600) return quote;
+  return `${quote}<details><summary>展开全文片段</summary><blockquote class="source-quote">${escapeHtml(text)}</blockquote></details>`;
+}
+
+function noExcerptMessage(comparison) {
+  const label = comparison?.comparison_label || '';
+  if (label === 'source_unavailable') return 'source body 不可用，无法显示对应片段。';
+  if (label === 'no_relevant_excerpt') return 'source 可访问，但没有找到能支撑该句的片段。';
+  return '未找到可展示的 source 片段。';
+}
+
+function renderMoreExcerpts(excerpts, best) {
+  const filtered = (excerpts || []).filter(excerpt => excerpt && excerpt.text && excerpt.text !== best?.text);
+  if (!filtered.length) return '';
+  return `<details>
+    <summary class="link-button">查看更多 source 片段</summary>
+    <div class="review-list">
+      ${filtered.map(excerpt => `<blockquote class="source-quote">${escapeHtml(excerpt.text.length > 600 ? `${excerpt.text.slice(0, 600)}…` : excerpt.text)}</blockquote>`).join('')}
+    </div>
+  </details>`;
 }
 
 function renderDocumentGraph(graph) {
@@ -428,6 +495,7 @@ function renderTerminalTreeGroup(group, edges, byId) {
   return `<details class="tree-group"${open}>
     <summary>${escapeHtml(group.label)} ${rows.length} 条</summary>
     <div class="tree-items">
+      <div class="tree-header"><span>原文 claim</span><span>引用来源</span><span>source 片段 / 结论</span></div>
       ${rows.map((row, index) => renderTreeRow(row, group.id, index)).join('')}
       ${rows.length > 5 ? `<button type="button" class="secondary" data-show-tree-group="${escapeHtml(group.id)}">展开全部</button>` : ''}
     </div>
@@ -449,9 +517,9 @@ function renderTreeRow(row, groupId, index) {
   const hiddenAttr = index >= 5 ? ` data-tree-extra="${escapeHtml(groupId)}"` : '';
   const sourceUrl = row.source?.metadata?.source_url || '';
   return `<div class="tree-row${hiddenClass}"${hiddenAttr} id="tree-${escapeHtml(row.statement.metadata?.citation_label || row.statement.id)}" data-citation-id="${escapeHtml(row.statement.id.replace('statement:', ''))}">
-    <div class="tree-cell statement">${escapeHtml(row.statement.label)}<div class="muted small">${escapeHtml(row.statement.metadata?.citation_label ? `[${row.statement.metadata.citation_label}]` : '')}</div></div>
-    <div class="tree-cell source">${sourceUrl ? `<a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer">${escapeHtml(row.source?.label || '来源')}</a>` : escapeHtml(row.source?.label || '未解析来源')}</div>
-    <div class="tree-cell reason ${escapeHtml(row.reason?.terminal_class || '')} ${escapeHtml(row.reason?.type || '')}">${escapeHtml(row.reason?.label || '')}</div>
+    <div class="tree-cell statement"><span class="tree-cell-label">原文 claim</span>${escapeHtml(row.statement.label)}<div class="muted small">${escapeHtml(row.statement.metadata?.citation_label ? `[${row.statement.metadata.citation_label}]` : '')}</div></div>
+    <div class="tree-cell source"><span class="tree-cell-label">引用来源</span>${sourceUrl ? `<a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer">${escapeHtml(row.source?.label || '来源')}</a>` : escapeHtml(row.source?.label || '未解析来源')}</div>
+    <div class="tree-cell reason ${escapeHtml(row.reason?.terminal_class || '')} ${escapeHtml(row.reason?.type || '')}"><span class="tree-cell-label">source 片段 / 结论</span>${escapeHtml(row.reason?.label || '')}</div>
   </div>`;
 }
 

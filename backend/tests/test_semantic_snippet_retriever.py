@@ -157,3 +157,26 @@ def test_semantic_reranker_uses_bilingual_finance_bridge_without_inventing_text(
 
     assert response.selected_snippet_indexes
     assert set(response.selected_snippet_indexes).issubset({1, 2})
+
+
+def test_chinese_cloud_doc_sentence_with_vpn_title_is_not_dropped_as_title_like():
+    source_text = (
+        "VPN 连接 场景类_腾讯云 本页目录：通过 SSL VPN 是否可以访问 Internet？"
+        " 腾讯云 VPN 可以作为代理吗？"
+        " 腾讯云 VPN 连接在国家相关政策法规下提供服务，不提供访问 Internet 功能，"
+        "禁止通过技术方式绕过网络审查访问境外网络，同时不提供代理功能。"
+    )
+    result = retrieve_evidence_snippets_with_reason(
+        "腾讯云官方 VPN 文档明确说，其 VPN 连接不提供访问 Internet 功能，也不提供代理功能，并禁止通过技术方式绕过网络审查访问境外网络。",
+        source_text,
+        source_pointer_description=(
+            "腾讯云 VPN 场景类文档明确说，不支持通过腾讯云 VPN 访问境外 Google，"
+            "不提供访问 Internet 功能，禁止通过技术方式绕过网络审查访问境外网络，同时不提供代理功能。"
+        ),
+        source_title="VPN 连接 场景类_腾讯云",
+        source_url="https://cloud.tencent.com/document/product/554/79786",
+    )
+
+    assert result.status == "lexical_match"
+    assert "不提供访问 Internet 功能" in result.snippets[0].text
+    assert "不提供代理功能" in result.snippets[0].text

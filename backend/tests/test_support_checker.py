@@ -155,7 +155,7 @@ def test_support_checker_batches_accessible_source_checks():
     assert all(edge.support_relation == SupportRelation.DIRECTLY_SUPPORTS for edge, _flags in results)
 
 
-def test_support_checker_provider_failure_becomes_audit_limited_edge():
+def test_support_checker_provider_failure_uses_retrieved_snippet_fallback():
     class FailingSupportProvider(MockLLMProvider):
         async def check_claim_supports(self, checks, cancellation_token=None):
             raise LLMProviderError("Codex CLI request failed (1): model refresh failed")
@@ -172,7 +172,32 @@ def test_support_checker_provider_failure_becomes_audit_limited_edge():
 
     edge, flags = SupportChecker(FailingSupportProvider()).check(claim, source)
 
-    assert edge.support_relation == SupportRelation.INACCESSIBLE
-    assert edge.final_bucket == FinalGroundingBucket.UNVERIFIABLE_OR_MISMATCH
-    assert RiskFlag.INACCESSIBLE_SOURCE in flags
+    assert edge.support_relation == SupportRelation.DIRECTLY_SUPPORTS
+    assert edge.final_bucket == FinalGroundingBucket.HARD_FACT_GROUNDING
+    assert RiskFlag.INACCESSIBLE_SOURCE not in flags
+    assert edge.best_evidence_excerpt is not None
+    assert "revenue of $10 billion" in edge.evidence_quote
+    assert "Falling back to retrieved source excerpts" in edge.reasoning_summary
+
+
+def test_support_checker_provider_failure_marks_interpretive_claim_as_partial_support():
+    class FailingSupportProvider(MockLLMProvider):
+        async def check_claim_supports(self, checks, cancellation_token=None):
+            raise LLMProviderError("Codex CLI request failed (1): model refresh failed")
+
+    claim = make_claim("这个套餐适合新手练手和开发测试。")
+    source = Source(
+        source_id="s001",
+        title="云服务器产品页",
+        access_status=AccessStatus.ACCESSIBLE,
+        source_type=SourceType.PRIMARY_FACT_SOURCE,
+        extracted_text="产品适用于个人博客、小网站、开发测试环境。",
+        extracted_text_preview="产品适用于个人博客、小网站、开发测试环境。",
+    )
+
+    edge, flags = SupportChecker(FailingSupportProvider()).check(claim, source)
+
+    assert edge.support_relation == SupportRelation.PARTIALLY_SUPPORTS
+    assert edge.final_bucket == FinalGroundingBucket.WEAK_FACT_GROUNDING
+    assert RiskFlag.INACCESSIBLE_SOURCE not in flags
     assert "could not be completed by the LLM provider" in edge.reasoning_summary

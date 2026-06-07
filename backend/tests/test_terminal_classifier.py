@@ -16,6 +16,7 @@ from app.schemas import (
     EdgeBasis,
     EdgeType,
     EvidenceEdge,
+    EvidenceExcerpt,
     FinalGroundingBucket,
     ImportanceLabel,
     Source,
@@ -35,7 +36,10 @@ def make_claim(
     bucket=FinalGroundingBucket.HARD_FACT_GROUNDING,
     scope=SupportScope.OWN_INSTITUTIONAL_FACT,
     claim_type=ClaimType.FACTUAL,
+    text=None,
+    evidence_quote="Relevant source excerpt.",
 ):
+    claim_text = text or f"测试引用陈述 {claim_id}"
     edge = EvidenceEdge(
         claim_id=claim_id,
         source_id=source_id,
@@ -44,12 +48,12 @@ def make_claim(
         support_relation=relation,
         final_bucket=bucket,
         support_scope=scope,
-        evidence_quote="Relevant source excerpt.",
+        evidence_quote=evidence_quote,
     )
     return Claim(
         claim_id=claim_id,
-        original_text_span=f"测试引用陈述 {claim_id}。[1]",
-        normalized_claim=f"测试引用陈述 {claim_id}",
+        original_text_span=f"{claim_text}。[1]",
+        normalized_claim=claim_text,
         claim_type=claim_type,
         discourse_role=DiscourseRole.ASSERTED_CLAIM,
         importance_label=ImportanceLabel.SUPPORTING,
@@ -101,6 +105,8 @@ def test_official_page_directly_supports_school_fact_terminal_fact():
 
     assert result.terminal_class == TerminalClass.FACT
     assert result.terminal_reason == "verified_fact_support"
+    assert result.best_evidence_excerpt is not None
+    assert result.claim_source_comparison.comparison_label == "supports"
 
 
 def test_blog_opinion_without_citation_terminal_opinion():
@@ -172,6 +178,7 @@ def test_no_relevant_snippet_terminal_unresolved_reason_no_relevant_snippet():
     claim = make_claim(
         relation=SupportRelation.AUDIT_LIMITED_NO_RELEVANT_SNIPPET,
         bucket=FinalGroundingBucket.UNVERIFIABLE_OR_MISMATCH,
+        evidence_quote="",
     )
 
     result = terminal(claim, DisplayStatus.AUDIT_LIMITED, {"s001": source()})
@@ -179,6 +186,8 @@ def test_no_relevant_snippet_terminal_unresolved_reason_no_relevant_snippet():
     assert result.terminal_class == TerminalClass.UNRESOLVED
     assert result.terminal_reason == "no_relevant_snippet"
     assert result.unresolved_reason == UnresolvedReason.NO_RELEVANT_SNIPPET
+    assert result.best_evidence_excerpt is None
+    assert result.claim_source_comparison.comparison_label == "no_relevant_excerpt"
 
 
 def test_accessible_source_no_support_terminal_mismatch():
@@ -189,6 +198,72 @@ def test_accessible_source_no_support_terminal_mismatch():
     result = terminal(claim, DisplayStatus.TRUE_CITATION_PROBLEM, {"s001": source()})
 
     assert result.terminal_class == TerminalClass.MISMATCH
+    assert result.claim_source_comparison.comparison_label == "weaker_than_claim"
+    assert "Relevant source excerpt" in result.claim_source_comparison.source_says
+
+
+def test_opinion_with_fact_premise_has_source_excerpt_comparison():
+    claim = make_claim(
+        relation=SupportRelation.PARTIALLY_SUPPORTS,
+        bucket=FinalGroundingBucket.WEAK_FACT_GROUNDING,
+        scope=SupportScope.PREMISE_SUPPORT_FOR_ANALYSIS,
+        claim_type=ClaimType.JUDGMENT,
+        text="0.68% 对长期持有有影响",
+        evidence_quote="The expense ratio is 0.68%.",
+    )
+    result = terminal(claim, DisplayStatus.ANALYSIS_FROM_SOURCED_PREMISES, {"s001": source()})
+
+    assert result.terminal_class == TerminalClass.OPINION
+    assert result.best_evidence_excerpt is not None
+    assert "expense ratio" in result.best_evidence_excerpt.text
+    assert result.claim_source_comparison.comparison_label == "supports_fact_premise"
+    assert "source 支持事实前提" in result.claim_source_comparison.gap
+
+
+def test_mismatch_comparison_can_use_explicit_weaker_excerpt():
+    claim = make_claim(
+        relation=SupportRelation.NO_SUPPORT,
+        bucket=FinalGroundingBucket.UNVERIFIABLE_OR_MISMATCH,
+        text="研究证明 X 导致 Y",
+        evidence_quote="The study found an association between X and Y.",
+    )
+    result = terminal(claim, DisplayStatus.TRUE_CITATION_PROBLEM, {"s001": source()})
+
+    assert result.terminal_class == TerminalClass.MISMATCH
+    assert result.best_evidence_excerpt.text == "The study found an association between X and Y."
+    assert result.claim_source_comparison.comparison_label == "weaker_than_claim"
+
+
+def test_no_source_url_comparison_is_source_unavailable_without_quote_block():
+    claim = make_claim(
+        relation=SupportRelation.INACCESSIBLE,
+        bucket=FinalGroundingBucket.UNVERIFIABLE_OR_MISMATCH,
+        evidence_quote="",
+    )
+    claim.citation_source_url = None
+    claim.evidence_chain = []
+    result = terminal(claim, DisplayStatus.AUDIT_LIMITED, {})
+
+    assert result.terminal_class == TerminalClass.UNRESOLVED
+    assert result.best_evidence_excerpt is None
+    assert result.claim_source_comparison.comparison_label == "source_unavailable"
+    assert result.claim_source_comparison.source_says == ""
+
+
+def test_terminal_result_preserves_multiple_evidence_excerpts():
+    claim = make_claim()
+    claim.evidence_quote = ""
+    claim.evidence_excerpts = [
+        EvidenceExcerpt(excerpt_id="e1", source_id="s001", source_title="Source", text="First source excerpt.", excerpt_role="direct_support"),
+        EvidenceExcerpt(excerpt_id="e2", source_id="s001", source_title="Source", text="Second source excerpt.", excerpt_role="direct_support"),
+    ]
+    result = terminal(claim, DisplayStatus.VERIFIED_FACT_SUPPORT, {"s001": source()})
+
+    assert result.best_evidence_excerpt.text == "First source excerpt."
+    assert [excerpt.text for excerpt in result.evidence_excerpts] == [
+        "First source excerpt.",
+        "Second source excerpt.",
+    ]
 
 
 def test_summary_pie_ratios_exclude_mismatch():
@@ -246,6 +321,8 @@ def test_review_queue_defaults_to_mismatch_and_opinion_only():
         TerminalClass.OPINION,
     ]
     assert all("测试引用陈述" in item.cited_text for item in queue.needs_review)
+    assert queue.needs_review[0].best_evidence_excerpt is not None
+    assert queue.needs_review[0].claim_source_comparison is not None
     assert [item.terminal_class for item in queue.verified_fact.items] == [TerminalClass.FACT]
     assert queue.verified_fact.default_collapsed is True
     assert queue.unresolved[0].unresolved_reason == UnresolvedReason.SOURCE_BODY_MISSING
@@ -280,6 +357,12 @@ def test_default_ui_uses_terminal_pie_and_warning_badge_without_debug_tags():
     assert "引用最终落点" in html
     assert "复核建议" in html
     assert "需要人工复核" in html
+    assert "引用来源片段" in html
+    assert "原文 claim" in html
+    assert "引用来源" in html
+    assert "source 片段 / 结论" in html
+    assert "对比结论" in html
+    assert "未找到可展示的 source 片段" in html
     assert "证据终点图" in html
     assert "terminalPie" in html
     assert "mismatchBadge" in html

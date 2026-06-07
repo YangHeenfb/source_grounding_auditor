@@ -161,15 +161,19 @@ def _reason_label(result: CitationTerminalResult) -> str:
     if result.terminal_class == TerminalClass.FACT:
         return _evidence_label(result) or "官方事实来源支持"
     if result.terminal_class == TerminalClass.OPINION:
-        return "最终停在分析或判断来源"
+        return result.claim_source_comparison.gap if result.claim_source_comparison else "最终停在分析或判断来源"
     if result.terminal_class == TerminalClass.UNRESOLVED:
+        if result.claim_source_comparison and result.claim_source_comparison.gap:
+            return result.claim_source_comparison.gap
         if result.unresolved_reason:
             return UNRESOLVED_REASON_LABELS.get(result.unresolved_reason, result.unresolved_reason.value)
         return "无法完成本轮审计"
-    return "source 不支持该陈述"
+    return result.claim_source_comparison.gap if result.claim_source_comparison else "source 不支持该陈述"
 
 
 def _evidence_label(result: CitationTerminalResult) -> str:
+    if result.best_evidence_excerpt and result.best_evidence_excerpt.text:
+        return _short_text(result.best_evidence_excerpt.text, limit=90)
     for node in reversed(result.path_nodes):
         if node.get("type") == "evidence":
             label = str(node.get("label") or "")

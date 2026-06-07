@@ -72,6 +72,9 @@ def _item(result: CitationTerminalResult) -> ReviewQueueItem:
         short_explanation=result.short_explanation,
         terminal_reason=result.terminal_reason,
         unresolved_reason=result.unresolved_reason,
+        best_evidence_excerpt=result.best_evidence_excerpt,
+        evidence_excerpts=list(result.evidence_excerpts),
+        claim_source_comparison=result.claim_source_comparison,
     )
 
 

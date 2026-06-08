@@ -117,6 +117,12 @@ source 可访问，也有相关片段，但 source 明显不支持原文中的 c
 
 点击某个 source 或终点节点时，才展开具体 cited text。
 
+## Demo screenshot
+
+下面是一段完整财经分析文本的展示结果：既有落到财报数据的事实终点，也有停在投资评论的观点终点，并保留少量无法审计和引用错配 warning。
+
+![Citation terminal audit finance demo](docs/assets/citation-terminal-finance-paragraph-demo.png)
+
 ## 一个简单例子
 
 原文写：
